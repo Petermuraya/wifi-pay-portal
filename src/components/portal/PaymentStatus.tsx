@@ -32,7 +32,7 @@ export function PaymentStatus({ payment, onBack }: PaymentStatusProps) {
     },
     initialData: payment,
     refetchInterval: (query) => {
-      return query.data?.status === "pending" && pollingCount < maxPolling ? 10000 : false;
+      return query.state.data?.status === "pending" && pollingCount < maxPolling ? 10000 : false;
     },
   });
 
