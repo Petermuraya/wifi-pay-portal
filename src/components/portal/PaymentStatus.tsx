@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,7 +31,9 @@ export function PaymentStatus({ payment, onBack }: PaymentStatusProps) {
       return data;
     },
     initialData: payment,
-    refetchInterval: currentPayment?.status === "pending" && pollingCount < maxPolling ? 10000 : false,
+    refetchInterval: (query) => {
+      return query.data?.status === "pending" && pollingCount < maxPolling ? 10000 : false;
+    },
   });
 
   useEffect(() => {
