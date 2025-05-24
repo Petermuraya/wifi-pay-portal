@@ -53,20 +53,40 @@ export function PaymentForm({ package: pkg, macAddress, onPaymentCreated, onBack
 
       if (paymentError) throw paymentError;
 
+      // Initiate STK Push
+      const { data: stkResponse, error: stkError } = await supabase.functions.invoke('mpesa-stk-push', {
+        body: {
+          paymentId: payment.id,
+          phoneNumber: phoneNumber,
+          amount: pkg.price
+        }
+      });
+
+      if (stkError) {
+        console.error('STK Push error:', stkError);
+        throw new Error('Failed to initiate M-Pesa payment');
+      }
+
+      if (!stkResponse.success) {
+        console.error('STK Push failed:', stkResponse);
+        throw new Error(stkResponse.message || 'M-Pesa payment failed');
+      }
+
+      console.log('STK Push successful:', stkResponse);
       return payment;
     },
     onSuccess: (payment) => {
       toast({
         title: "Payment Initiated",
-        description: "Please check your phone for the M-Pesa prompt.",
+        description: "Please check your phone for the M-Pesa prompt and enter your PIN.",
       });
       onPaymentCreated(payment);
     },
     onError: (error) => {
       console.error("Payment creation failed:", error);
       toast({
-        title: "Error",
-        description: "Failed to initiate payment. Please try again.",
+        title: "Payment Failed",
+        description: error.message || "Failed to initiate payment. Please try again.",
         variant: "destructive",
       });
     },
@@ -160,7 +180,7 @@ export function PaymentForm({ package: pkg, macAddress, onPaymentCreated, onBack
 
           <div className="text-center text-xs text-gray-500">
             <p>You will receive an M-Pesa prompt on your phone</p>
-            <p>Complete the payment to get internet access</p>
+            <p>Enter your M-Pesa PIN to complete the payment</p>
           </div>
         </CardContent>
       </Card>
