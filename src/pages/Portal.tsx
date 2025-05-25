@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -6,7 +5,7 @@ import { PackageSelection } from "@/components/portal/PackageSelection";
 import { PaymentForm } from "@/components/portal/PaymentForm";
 import { PaymentStatus } from "@/components/portal/PaymentStatus";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Wifi, Shield, Clock } from "lucide-react";
+import { Wifi, Shield, Clock, Gift, Activity } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 
 type AccessPackage = Database["public"]["Tables"]["access_packages"]["Row"];
@@ -15,7 +14,9 @@ type Payment = Database["public"]["Tables"]["payments"]["Row"];
 export default function Portal() {
   const [selectedPackage, setSelectedPackage] = useState<AccessPackage | null>(null);
   const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
+  const [currentSession, setCurrentSession] = useState<any>(null);
   const [userMacAddress, setUserMacAddress] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<"packages" | "voucher" | "monitor" | "admin">("packages");
 
   // Simulate getting MAC address (in real implementation, this would come from the router)
   useEffect(() => {
@@ -49,6 +50,11 @@ export default function Portal() {
   const handleBackToPackages = () => {
     setSelectedPackage(null);
     setCurrentPayment(null);
+  };
+
+  const handleSessionCreated = (session: any) => {
+    setCurrentSession(session);
+    setActiveTab("monitor");
   };
 
   if (isLoading) {
@@ -101,6 +107,44 @@ export default function Portal() {
           </Card>
         </div>
 
+        {/* Navigation Tabs */}
+        <div className="max-w-4xl mx-auto mb-6">
+          <div className="flex flex-wrap gap-2 justify-center">
+            <Button
+              variant={activeTab === "packages" ? "default" : "outline"}
+              onClick={() => setActiveTab("packages")}
+              className="flex items-center"
+            >
+              <Wifi className="h-4 w-4 mr-2" />
+              Packages
+            </Button>
+            <Button
+              variant={activeTab === "voucher" ? "default" : "outline"}
+              onClick={() => setActiveTab("voucher")}
+              className="flex items-center"
+            >
+              <Gift className="h-4 w-4 mr-2" />
+              Voucher
+            </Button>
+            <Button
+              variant={activeTab === "monitor" ? "default" : "outline"}
+              onClick={() => setActiveTab("monitor")}
+              className="flex items-center"
+            >
+              <Activity className="h-4 w-4 mr-2" />
+              Monitor
+            </Button>
+            <Button
+              variant={activeTab === "admin" ? "default" : "outline"}
+              onClick={() => setActiveTab("admin")}
+              className="flex items-center"
+            >
+              <Shield className="h-4 w-4 mr-2" />
+              Admin
+            </Button>
+          </div>
+        </div>
+
         {/* Main Content */}
         <div className="max-w-4xl mx-auto">
           {currentPayment ? (
@@ -115,12 +159,21 @@ export default function Portal() {
               onPaymentCreated={handlePaymentCreated}
               onBack={handleBackToPackages}
             />
-          ) : (
+          ) : activeTab === "packages" ? (
             <PackageSelection
               packages={packages || []}
               onSelectPackage={handlePackageSelect}
             />
-          )}
+          ) : activeTab === "voucher" ? (
+            <VoucherRedemption
+              macAddress={userMacAddress}
+              onSessionCreated={handleSessionCreated}
+            />
+          ) : activeTab === "monitor" ? (
+            <SessionMonitor macAddress={userMacAddress} />
+          ) : activeTab === "admin" ? (
+            <AdminPanel />
+          ) : null}
         </div>
 
         {/* Footer */}
