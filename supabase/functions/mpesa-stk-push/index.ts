@@ -38,8 +38,15 @@ serve(async (req) => {
     const tokenData = await tokenResponse.json()
     const accessToken = tokenData.access_token
 
-    // Generate timestamp
-    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '')
+    // Generate timestamp in the correct format: YYYYMMDDHHMMSS
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = String(now.getMonth() + 1).padStart(2, '0')
+    const day = String(now.getDate()).padStart(2, '0')
+    const hours = String(now.getHours()).padStart(2, '0')
+    const minutes = String(now.getMinutes()).padStart(2, '0')
+    const seconds = String(now.getSeconds()).padStart(2, '0')
+    const timestamp = `${year}${month}${day}${hours}${minutes}${seconds}`
     
     // Generate password
     const businessShortCode = Deno.env.get('MPESA_BUSINESS_SHORT_CODE')
