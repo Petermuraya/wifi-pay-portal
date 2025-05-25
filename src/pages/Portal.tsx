@@ -1,10 +1,15 @@
+
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PackageSelection } from "@/components/portal/PackageSelection";
 import { PaymentForm } from "@/components/portal/PaymentForm";
 import { PaymentStatus } from "@/components/portal/PaymentStatus";
+import { VoucherRedemption } from "@/components/portal/VoucherRedemption";
+import { SessionMonitor } from "@/components/portal/SessionMonitor";
+import { AdminPanel } from "@/components/portal/AdminPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Wifi, Shield, Clock, Gift, Activity } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 
