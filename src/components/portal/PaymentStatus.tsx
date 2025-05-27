@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, Clock, XCircle, RefreshCw, ArrowLeft, Wifi } from "lucide-react";
+import { CheckCircle, Clock, XCircle, RefreshCw, ArrowLeft, Wifi, Copy, Key } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import type { Database } from "@/integrations/supabase/types";
 
 type Payment = Database["public"]["Tables"]["payments"]["Row"];
@@ -17,6 +18,7 @@ interface PaymentStatusProps {
 export function PaymentStatus({ payment, onBack }: PaymentStatusProps) {
   const [pollingCount, setPollingCount] = useState(0);
   const maxPolling = 30; // Poll for 5 minutes (30 * 10 seconds)
+  const { toast } = useToast();
 
   const { data: currentPayment, refetch } = useQuery({
     queryKey: ["payment-status", payment.id],
@@ -48,6 +50,16 @@ export function PaymentStatus({ payment, onBack }: PaymentStatusProps) {
   const handleManualRefresh = () => {
     refetch();
     setPollingCount(prev => prev + 1);
+  };
+
+  const copyReconnectionCode = () => {
+    if (currentPayment?.reconnection_code) {
+      navigator.clipboard.writeText(currentPayment.reconnection_code);
+      toast({
+        title: "Code Copied",
+        description: "Reconnection code copied to clipboard",
+      });
+    }
   };
 
   const getStatusIcon = () => {
@@ -150,6 +162,34 @@ export function PaymentStatus({ payment, onBack }: PaymentStatusProps) {
               </div>
             </CardContent>
           </Card>
+
+          {/* Reconnection Code for Completed Payments */}
+          {currentPayment?.status === "completed" && currentPayment?.reconnection_code && (
+            <Card className="bg-blue-50 border-blue-200">
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-blue-800">Reconnection Code:</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={copyReconnectionCode}
+                    className="h-6 p-1 text-blue-600"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </Button>
+                </div>
+                <div className="bg-white rounded px-3 py-2 border border-blue-200">
+                  <span className="font-mono text-lg font-bold text-blue-900">
+                    {currentPayment.reconnection_code}
+                  </span>
+                </div>
+                <p className="text-xs text-blue-600 mt-2">
+                  <Key className="h-3 w-3 inline mr-1" />
+                  Use this code to reconnect if you're not automatically connected
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Actions */}
           <div className="space-y-3">

@@ -7,6 +7,11 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+function generateReconnectionCode(): string {
+  // Generate a 6-digit unique reconnection code
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -52,9 +57,14 @@ serve(async (req) => {
       const transactionDateItem = callbackMetadata.find((item: any) => item.Name === 'TransactionDate')
       const phoneNumberItem = callbackMetadata.find((item: any) => item.Name === 'PhoneNumber')
 
+      // Generate unique reconnection code
+      const reconnectionCode = generateReconnectionCode()
+
       updateData = {
         status: 'completed',
         mpesa_receipt_number: receiptItem?.Value || null,
+        reconnection_code: reconnectionCode,
+        reconnection_code_used: false,
         updated_at: new Date().toISOString()
       }
 
@@ -62,7 +72,8 @@ serve(async (req) => {
         paymentId: payment.id,
         amount: amountItem?.Value,
         receipt: receiptItem?.Value,
-        phone: phoneNumberItem?.Value
+        phone: phoneNumberItem?.Value,
+        reconnectionCode: reconnectionCode
       })
 
       // Also update the user session to active

@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,7 +23,7 @@ export default function Portal() {
   const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
   const [currentSession, setCurrentSession] = useState<any>(null);
   const [userMacAddress, setUserMacAddress] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"packages" | "voucher" | "monitor" | "admin" | "router" | "redirect">("packages");
+  const [activeTab, setActiveTab] = useState<"packages" | "voucher" | "monitor" | "admin" | "router" | "redirect" | "reconnect">("packages");
 
   // Simulate getting MAC address (in real implementation, this would come from the router)
   useEffect(() => {
@@ -158,6 +157,14 @@ export default function Portal() {
               Voucher
             </Button>
             <Button
+              variant={activeTab === "reconnect" ? "default" : "outline"}
+              onClick={() => setActiveTab("reconnect")}
+              className="flex items-center"
+            >
+              <Shield className="h-4 w-4 mr-2" />
+              Reconnect
+            </Button>
+            <Button
               variant={activeTab === "monitor" ? "default" : "outline"}
               onClick={() => setActiveTab("monitor")}
               className="flex items-center"
@@ -225,6 +232,11 @@ export default function Portal() {
               <VoucherRedemption
                 macAddress={userMacAddress}
                 onSessionCreated={handleSessionCreated}
+              />
+            ) : activeTab === "reconnect" ? (
+              <ReconnectionCode
+                macAddress={userMacAddress}
+                onSessionActivated={handleSessionCreated}
               />
             ) : activeTab === "monitor" ? (
               <SessionMonitor macAddress={userMacAddress} />
