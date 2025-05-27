@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,9 +7,12 @@ import { PaymentStatus } from "@/components/portal/PaymentStatus";
 import { VoucherRedemption } from "@/components/portal/VoucherRedemption";
 import { SessionMonitor } from "@/components/portal/SessionMonitor";
 import { AdminPanel } from "@/components/portal/AdminPanel";
+import { RouterIntegration } from "@/components/portal/RouterIntegration";
+import { RedirectHandler } from "@/components/portal/RedirectHandler";
+import { SessionTimeoutManager } from "@/components/portal/SessionTimeoutManager";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Wifi, Shield, Clock, Gift, Activity } from "lucide-react";
+import { Wifi, Shield, Clock, Gift, Activity, Router, Globe } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 
 type AccessPackage = Database["public"]["Tables"]["access_packages"]["Row"];
@@ -21,13 +23,27 @@ export default function Portal() {
   const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
   const [currentSession, setCurrentSession] = useState<any>(null);
   const [userMacAddress, setUserMacAddress] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"packages" | "voucher" | "monitor" | "admin">("packages");
+  const [activeTab, setActiveTab] = useState<"packages" | "voucher" | "monitor" | "admin" | "router" | "redirect">("packages");
 
   // Simulate getting MAC address (in real implementation, this would come from the router)
   useEffect(() => {
-    // Generate a mock MAC address for demo purposes
-    const mockMac = "00:1B:44:11:3A:B7";
-    setUserMacAddress(mockMac);
+    // Check for URL parameters to detect captive portal redirect
+    const urlParams = new URLSearchParams(window.location.search);
+    const macParam = urlParams.get('mac');
+    const origParam = urlParams.get('orig') || urlParams.get('redirect') || urlParams.get('url');
+    
+    if (macParam) {
+      setUserMacAddress(macParam);
+    } else {
+      // Generate a mock MAC address for demo purposes
+      const mockMac = "00:1B:44:11:3A:B7";
+      setUserMacAddress(mockMac);
+    }
+
+    // If there's an original URL, show redirect handler
+    if (origParam) {
+      setActiveTab("redirect");
+    }
   }, []);
 
   const { data: packages, isLoading } = useQuery({
@@ -60,6 +76,15 @@ export default function Portal() {
   const handleSessionCreated = (session: any) => {
     setCurrentSession(session);
     setActiveTab("monitor");
+    
+    // Set authentication success flag for redirect handler
+    sessionStorage.setItem('captive_portal_auth', 'success');
+  };
+
+  const handleSessionExpired = () => {
+    setCurrentSession(null);
+    setActiveTab("packages");
+    sessionStorage.removeItem('captive_portal_auth');
   };
 
   if (isLoading) {
@@ -140,6 +165,22 @@ export default function Portal() {
               Monitor
             </Button>
             <Button
+              variant={activeTab === "redirect" ? "default" : "outline"}
+              onClick={() => setActiveTab("redirect")}
+              className="flex items-center"
+            >
+              <Globe className="h-4 w-4 mr-2" />
+              Redirect
+            </Button>
+            <Button
+              variant={activeTab === "router" ? "default" : "outline"}
+              onClick={() => setActiveTab("router")}
+              className="flex items-center"
+            >
+              <Router className="h-4 w-4 mr-2" />
+              Router Setup
+            </Button>
+            <Button
               variant={activeTab === "admin" ? "default" : "outline"}
               onClick={() => setActiveTab("admin")}
               className="flex items-center"
@@ -152,33 +193,48 @@ export default function Portal() {
 
         {/* Main Content */}
         <div className="max-w-4xl mx-auto">
-          {currentPayment ? (
-            <PaymentStatus 
-              payment={currentPayment}
-              onBack={handleBackToPackages}
-            />
-          ) : selectedPackage ? (
-            <PaymentForm
-              package={selectedPackage}
-              macAddress={userMacAddress}
-              onPaymentCreated={handlePaymentCreated}
-              onBack={handleBackToPackages}
-            />
-          ) : activeTab === "packages" ? (
-            <PackageSelection
-              packages={packages || []}
-              onSelectPackage={handlePackageSelect}
-            />
-          ) : activeTab === "voucher" ? (
-            <VoucherRedemption
-              macAddress={userMacAddress}
-              onSessionCreated={handleSessionCreated}
-            />
-          ) : activeTab === "monitor" ? (
-            <SessionMonitor macAddress={userMacAddress} />
-          ) : activeTab === "admin" ? (
-            <AdminPanel />
-          ) : null}
+          <div className="grid gap-6">
+            {/* Session Timeout Manager - Show when there's an active session */}
+            {currentSession && (
+              <SessionTimeoutManager 
+                sessionId={currentSession.id}
+                onSessionExpired={handleSessionExpired}
+              />
+            )}
+
+            {/* Main Content Area */}
+            {currentPayment ? (
+              <PaymentStatus 
+                payment={currentPayment}
+                onBack={handleBackToPackages}
+              />
+            ) : selectedPackage ? (
+              <PaymentForm
+                package={selectedPackage}
+                macAddress={userMacAddress}
+                onPaymentCreated={handlePaymentCreated}
+                onBack={handleBackToPackages}
+              />
+            ) : activeTab === "packages" ? (
+              <PackageSelection
+                packages={packages || []}
+                onSelectPackage={handlePackageSelect}
+              />
+            ) : activeTab === "voucher" ? (
+              <VoucherRedemption
+                macAddress={userMacAddress}
+                onSessionCreated={handleSessionCreated}
+              />
+            ) : activeTab === "monitor" ? (
+              <SessionMonitor macAddress={userMacAddress} />
+            ) : activeTab === "redirect" ? (
+              <RedirectHandler macAddress={userMacAddress} />
+            ) : activeTab === "router" ? (
+              <RouterIntegration />
+            ) : activeTab === "admin" ? (
+              <AdminPanel />
+            ) : null}
+          </div>
         </div>
 
         {/* Footer */}
