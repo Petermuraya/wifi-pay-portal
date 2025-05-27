@@ -47,6 +47,8 @@ export type Database = {
           mpesa_checkout_request_id: string | null
           mpesa_receipt_number: string | null
           phone_number: string
+          reconnection_code: string | null
+          reconnection_code_used: boolean | null
           session_id: string | null
           status: Database["public"]["Enums"]["payment_status"] | null
           updated_at: string | null
@@ -58,6 +60,8 @@ export type Database = {
           mpesa_checkout_request_id?: string | null
           mpesa_receipt_number?: string | null
           phone_number: string
+          reconnection_code?: string | null
+          reconnection_code_used?: boolean | null
           session_id?: string | null
           status?: Database["public"]["Enums"]["payment_status"] | null
           updated_at?: string | null
@@ -69,6 +73,8 @@ export type Database = {
           mpesa_checkout_request_id?: string | null
           mpesa_receipt_number?: string | null
           phone_number?: string
+          reconnection_code?: string | null
+          reconnection_code_used?: boolean | null
           session_id?: string | null
           status?: Database["public"]["Enums"]["payment_status"] | null
           updated_at?: string | null
