@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,6 +11,7 @@ import { AdminPanel } from "@/components/portal/AdminPanel";
 import { RouterIntegration } from "@/components/portal/RouterIntegration";
 import { RedirectHandler } from "@/components/portal/RedirectHandler";
 import { SessionTimeoutManager } from "@/components/portal/SessionTimeoutManager";
+import { ReconnectionCode } from "@/components/portal/ReconnectionCode";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Wifi, Shield, Clock, Gift, Activity, Router, Globe } from "lucide-react";
