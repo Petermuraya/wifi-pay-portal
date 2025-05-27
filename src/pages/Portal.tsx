@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -228,7 +229,7 @@ export default function Portal() {
             ) : activeTab === "monitor" ? (
               <SessionMonitor macAddress={userMacAddress} />
             ) : activeTab === "redirect" ? (
-              <RedirectHandler macAddress={userMacAddress} />
+              <RedirectHandler userMacAddress={userMacAddress} />
             ) : activeTab === "router" ? (
               <RouterIntegration />
             ) : activeTab === "admin" ? (
