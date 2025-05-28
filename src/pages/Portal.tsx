@@ -114,30 +114,7 @@ export default function Portal() {
           </p>
         </div>
 
-        {/* Features */}
-        <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <Card className="text-center">
-            <CardContent className="pt-6">
-              <Shield className="h-8 w-8 text-green-600 mx-auto mb-2" />
-              <h3 className="font-semibold mb-1">Secure Payment</h3>
-              <p className="text-sm text-gray-600">Pay safely via M-Pesa</p>
-            </CardContent>
-          </Card>
-          <Card className="text-center">
-            <CardContent className="pt-6">
-              <Clock className="h-8 w-8 text-blue-600 mx-auto mb-2" />
-              <h3 className="font-semibold mb-1">Instant Access</h3>
-              <p className="text-sm text-gray-600">Get connected immediately after payment</p>
-            </CardContent>
-          </Card>
-          <Card className="text-center">
-            <CardContent className="pt-6">
-              <Wifi className="h-8 w-8 text-purple-600 mx-auto mb-2" />
-              <h3 className="font-semibold mb-1">High Speed</h3>
-              <p className="text-sm text-gray-600">Enjoy fast and reliable internet</p>
-            </CardContent>
-          </Card>
-        </div>
+        
 
         {/* Navigation Tabs */}
         <div className="max-w-4xl mx-auto mb-6">
