@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,27 +7,34 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Shield, Ticket, Users, Activity, Download } from "lucide-react";
+import { Shield, Ticket, Users, Activity, Download, LogOut, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Toaster } from "@/components/ui/toaster";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatDuration } from "@/lib/utils";
 
 export function AdminPanel() {
   const [adminKey, setAdminKey] = useState("");
   const [selectedPackage, setSelectedPackage] = useState("");
   const [voucherQuantity, setVoucherQuantity] = useState(1);
+  const [voucherPrefix, setVoucherPrefix] = useState("VIP");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const { toast } = useToast();
 
+  // Enhanced admin authentication with session timeout
   const { data: packages } = useQuery({
     queryKey: ["access-packages"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("access_packages")
         .select("*")
-        .eq("is_active", true);
+        .eq("is_active", true)
+        .order("price", { ascending: true });
       
       if (error) throw error;
       return data;
     },
+    staleTime: 1000 * 60 * 5, // 5 minutes cache
   });
 
   const { data: activeSessions, refetch: refetchSessions } = useQuery({
@@ -36,7 +42,7 @@ export function AdminPanel() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("user_sessions")
-        .select("*, payments(*)")
+        .select("*, payments(*, access_packages(*))")
         .eq("status", "active")
         .order("created_at", { ascending: false });
       
@@ -44,247 +50,343 @@ export function AdminPanel() {
       return data;
     },
     enabled: isAuthenticated,
-    refetchInterval: 30000,
+    refetchInterval: 15000, // Refresh every 15 seconds
   });
 
   const generateVouchersMutation = useMutation({
-    mutationFn: async ({ packageId, quantity }: { packageId: string; quantity: number }) => {
+    mutationFn: async ({ 
+      packageId, 
+      quantity,
+      prefix 
+    }: { 
+      packageId: string; 
+      quantity: number;
+      prefix: string;
+    }) => {
       const { data, error } = await supabase.functions.invoke('voucher-generator', {
         body: {
           action: 'generate',
-          packageId: packageId,
-          quantity: quantity,
-          adminKey: adminKey
+          packageId,
+          quantity,
+          prefix,
+          adminKey
         }
       });
 
       if (error) throw error;
-      if (!data.success) throw new Error(data.error);
+      if (!data.success) throw new Error(data.error || "Generation failed");
       return data;
     },
     onSuccess: (data) => {
       toast({
-        title: "Vouchers Generated",
+        title: "✅ Vouchers Generated",
         description: `Successfully generated ${data.vouchers.length} voucher(s).`,
       });
-      
-      // Download vouchers as CSV
       downloadVouchers(data.vouchers);
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast({
-        title: "Generation Failed",
-        description: error.message || "Failed to generate vouchers.",
+        title: "❌ Generation Failed",
+        description: error.message || "Failed to generate vouchers",
         variant: "destructive",
       });
     },
   });
 
   const disconnectSessionMutation = useMutation({
-    mutationFn: async ({ sessionId, macAddress }: { sessionId: string; macAddress: string }) => {
+    mutationFn: async ({ sessionId }: { sessionId: string }) => {
       const { data, error } = await supabase.functions.invoke('session-manager', {
         body: {
           action: 'deactivate',
-          sessionId: sessionId,
-          macAddress: macAddress
+          sessionId,
+          adminKey
         }
       });
 
       if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Disconnect failed");
       return data;
     },
     onSuccess: () => {
       toast({
-        title: "Session Disconnected",
-        description: "User has been disconnected successfully.",
+        title: "🔌 Session Disconnected",
+        description: "User session terminated successfully",
       });
       refetchSessions();
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast({
-        title: "Disconnect Failed",
-        description: "Failed to disconnect user session.",
+        title: "❌ Disconnect Failed",
+        description: error.message || "Failed to disconnect session",
         variant: "destructive",
       });
     },
   });
 
-  const handleLogin = () => {
-    if (adminKey.length >= 8) {
-      setIsAuthenticated(true);
-      toast({
-        title: "Admin Access Granted",
-        description: "You now have access to the admin panel.",
-      });
-    } else {
+  const handleLogin = async () => {
+    if (adminKey.length < 8) {
       toast({
         title: "Invalid Admin Key",
-        description: "Please enter a valid admin key.",
+        description: "Admin key must be at least 8 characters",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Verify admin key with server
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-verify', {
+        body: { adminKey }
+      });
+
+      if (error || !data?.valid) throw new Error("Invalid admin key");
+
+      setIsAuthenticated(true);
+      toast({
+        title: "🔓 Admin Access Granted",
+        description: "You now have elevated privileges",
+      });
+    } catch (error) {
+      toast({
+        title: "Authentication Failed",
+        description: "Invalid admin credentials",
         variant: "destructive",
       });
     }
   };
 
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setAdminKey("");
+    toast({
+      title: "🔒 Admin Session Ended",
+      description: "You have been logged out",
+    });
+  };
+
   const downloadVouchers = (vouchers: any[]) => {
-    const csv = [
-      "Code,Package,Status,Created",
-      ...vouchers.map(v => `${v.code},${v.package_id},${v.status},${v.created_at}`)
-    ].join('\n');
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vouchers-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
+    const headers = ["Code", "Package", "Duration", "Status", "Created At"];
+    const rows = vouchers.map(v => [
+      v.code,
+      v.package_name || "N/A",
+      formatDuration(v.duration_minutes),
+      v.status,
+      new Date(v.created_at).toLocaleString()
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(row => row.join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `vouchers_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   if (!isAuthenticated) {
     return (
-      <Card className="max-w-md mx-auto">
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Shield className="h-5 w-5 mr-2" />
-            Admin Access
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="adminKey">Admin Key</Label>
-            <Input
-              id="adminKey"
-              type="password"
-              value={adminKey}
-              onChange={(e) => setAdminKey(e.target.value)}
-              placeholder="Enter admin key"
-            />
-          </div>
-          <Button onClick={handleLogin} className="w-full">
-            Access Admin Panel
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5" />
+              <span>Admin Authentication</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="adminKey">Administrator Key</Label>
+              <Input
+                id="adminKey"
+                type="password"
+                value={adminKey}
+                onChange={(e) => setAdminKey(e.target.value)}
+                placeholder="Enter secure admin key"
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+              />
+              <p className="text-xs text-muted-foreground">
+                Requires elevated privileges
+              </p>
+            </div>
+            <Button onClick={handleLogin} className="w-full">
+              Authenticate
+            </Button>
+          </CardContent>
+        </Card>
+        <Toaster />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Voucher Generation */}
+    <div className="container mx-auto p-4 space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <Shield className="h-6 w-6" />
+          Admin Dashboard
+        </h1>
+        <Button variant="outline" onClick={handleLogout}>
+          <LogOut className="h-4 w-4 mr-2" />
+          Logout
+        </Button>
+      </div>
+
+      {/* Voucher Generation Section */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center">
-            <Ticket className="h-5 w-5 mr-2" />
-            Generate Vouchers
+          <CardTitle className="flex items-center gap-2">
+            <Ticket className="h-5 w-5" />
+            Voucher Generator
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label htmlFor="package">Package</Label>
-              <Select value={selectedPackage} onValueChange={setSelectedPackage}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select package" />
-                </SelectTrigger>
-                <SelectContent>
-                  {packages?.map((pkg) => (
-                    <SelectItem key={pkg.id} value={pkg.id}>
-                      {pkg.name} - KSh {pkg.price}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div>
-              <Label htmlFor="quantity">Quantity</Label>
-              <Input
-                id="quantity"
-                type="number"
-                min="1"
-                max="100"
-                value={voucherQuantity}
-                onChange={(e) => setVoucherQuantity(parseInt(e.target.value) || 1)}
-              />
-            </div>
-            
-            <div className="flex items-end">
-              <Button 
-                onClick={() => generateVouchersMutation.mutate({ 
-                  packageId: selectedPackage, 
-                  quantity: voucherQuantity 
-                })}
-                disabled={!selectedPackage || generateVouchersMutation.isPending}
-                className="w-full"
-              >
+        <CardContent className="grid gap-4 md:grid-cols-4">
+          <div className="space-y-2">
+            <Label>Package</Label>
+            <Select 
+              value={selectedPackage} 
+              onValueChange={setSelectedPackage}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select package" />
+              </SelectTrigger>
+              <SelectContent>
+                {packages?.map((pkg) => (
+                  <SelectItem key={pkg.id} value={pkg.id}>
+                    {pkg.name} ({pkg.duration_minutes} min) - KSh {pkg.price}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Quantity (1-100)</Label>
+            <Input
+              type="number"
+              min="1"
+              max="100"
+              value={voucherQuantity}
+              onChange={(e) => {
+                const val = Math.min(100, Math.max(1, parseInt(e.target.value) || 1));
+                setVoucherQuantity(val);
+              }}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Prefix (3 chars max)</Label>
+            <Input
+              maxLength={3}
+              value={voucherPrefix}
+              onChange={(e) => setVoucherPrefix(e.target.value.toUpperCase())}
+              placeholder="VIP"
+            />
+          </div>
+
+          <div className="flex items-end">
+            <Button
+              onClick={() => generateVouchersMutation.mutate({ 
+                packageId: selectedPackage, 
+                quantity: voucherQuantity,
+                prefix: voucherPrefix
+              })}
+              disabled={!selectedPackage || generateVouchersMutation.isPending}
+              className="w-full"
+            >
+              {generateVouchersMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
                 <Download className="h-4 w-4 mr-2" />
-                Generate & Download
-              </Button>
-            </div>
+              )}
+              Generate
+            </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Active Sessions */}
+      {/* Active Sessions Section */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center">
-              <Users className="h-5 w-5 mr-2" />
-              Active Sessions ({activeSessions?.length || 0})
-            </div>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => refetchSessions()}
-            >
-              <Activity className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
+        <CardHeader className="flex-row justify-between items-center">
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Active Sessions
+            <Badge variant="secondary" className="ml-2">
+              {activeSessions?.length || 0}
+            </Badge>
           </CardTitle>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => refetchSessions()}
+          >
+            <Activity className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {activeSessions?.map((session) => (
-              <div 
-                key={session.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-              >
-                <div className="flex-1">
-                  <p className="font-medium">{session.phone_number}</p>
-                  <p className="text-sm text-gray-600">MAC: {session.mac_address}</p>
-                  <p className="text-xs text-gray-500">
-                    Expires: {new Date(session.expires_at || "").toLocaleString()}
-                  </p>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Badge variant="default" className="bg-green-500">
-                    {session.status}
-                  </Badge>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => disconnectSessionMutation.mutate({
-                      sessionId: session.id,
-                      macAddress: session.mac_address
-                    })}
-                    disabled={disconnectSessionMutation.isPending}
-                  >
-                    Disconnect
-                  </Button>
-                </div>
-              </div>
-            ))}
-            
-            {(!activeSessions || activeSessions.length === 0) && (
-              <p className="text-center text-gray-500 py-8">
-                No active sessions found
-              </p>
-            )}
-          </div>
+          {activeSessions?.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>Package</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {activeSessions.map((session) => (
+                  <TableRow key={session.id}>
+                    <TableCell>{session.phone_number || "N/A"}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {session.mac_address}
+                    </TableCell>
+                    <TableCell>
+                      {session.payments?.access_packages?.name || "Unknown"}
+                    </TableCell>
+                    <TableCell>
+                      {new Date(session.expires_at).toLocaleTimeString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="default">
+                        {session.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => disconnectSessionMutation.mutate({
+                          sessionId: session.id
+                        })}
+                        disabled={disconnectSessionMutation.isPending}
+                      >
+                        {disconnectSessionMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          "Terminate"
+                        )}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="py-8 text-center text-muted-foreground">
+              No active sessions found
+            </div>
+          )}
         </CardContent>
       </Card>
+      <Toaster />
     </div>
   );
 }
