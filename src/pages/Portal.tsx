@@ -1,7 +1,7 @@
-
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { motion, AnimatePresence } from "framer-motion";
 import { PackageSelection } from "@/components/portal/PackageSelection";
 import { PaymentForm } from "@/components/portal/PaymentForm";
 import { PaymentStatus } from "@/components/portal/PaymentStatus";
@@ -14,41 +14,93 @@ import { SessionTimeoutManager } from "@/components/portal/SessionTimeoutManager
 import { ReconnectionCode } from "@/components/portal/ReconnectionCode";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Wifi, Shield, Clock, Gift, Activity, Router, Globe } from "lucide-react";
+import { 
+  Wifi, 
+  Shield, 
+  Clock, 
+  Gift, 
+  Activity, 
+  Router, 
+  Globe,
+  Loader2,
+  HelpCircle,
+  Settings,
+  User,
+  CreditCard
+} from "lucide-react";
+import { Toaster } from "@/components/ui/toaster";
+import { useToast } from "@/components/ui/use-toast";
+import { Progress } from "@/components/ui/progress";
 import type { Database } from "@/integrations/supabase/types";
 
 type AccessPackage = Database["public"]["Tables"]["access_packages"]["Row"];
 type Payment = Database["public"]["Tables"]["payments"]["Row"];
+
+const TAB_CONFIG = [
+  { id: "packages", icon: Wifi, label: "Packages" },
+  { id: "voucher", icon: Gift, label: "Voucher" },
+  { id: "reconnect", icon: Shield, label: "Reconnect" },
+  { id: "monitor", icon: Activity, label: "Session" },
+  { id: "redirect", icon: Globe, label: "Redirect" },
+  { id: "router", icon: Router, label: "Router" },
+  { id: "admin", icon: Settings, label: "Admin" }
+] as const;
+
+type TabId = typeof TAB_CONFIG[number]['id'];
 
 export default function Portal() {
   const [selectedPackage, setSelectedPackage] = useState<AccessPackage | null>(null);
   const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
   const [currentSession, setCurrentSession] = useState<any>(null);
   const [userMacAddress, setUserMacAddress] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"packages" | "voucher" | "monitor" | "admin" | "router" | "redirect" | "reconnect">("packages");
+  const [activeTab, setActiveTab] = useState<TabId>("packages");
+  const [isLoadingMac, setIsLoadingMac] = useState(true);
+  const { toast } = useToast();
 
-  // Simulate getting MAC address (in real implementation, this would come from the router)
+  // Enhanced MAC address detection with error handling
   useEffect(() => {
-    // Check for URL parameters to detect captive portal redirect
-    const urlParams = new URLSearchParams(window.location.search);
-    const macParam = urlParams.get('mac');
-    const origParam = urlParams.get('orig') || urlParams.get('redirect') || urlParams.get('url');
-    
-    if (macParam) {
-      setUserMacAddress(macParam);
-    } else {
-      // Generate a mock MAC address for demo purposes
-      const mockMac = "00:1B:44:11:3A:B7";
-      setUserMacAddress(mockMac);
-    }
+    const detectMacAddress = async () => {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const macParam = urlParams.get('mac');
+        const origParam = urlParams.get('orig') || urlParams.get('redirect') || urlParams.get('url');
+        
+        if (macParam) {
+          setUserMacAddress(macParam);
+        } else {
+          // In production, you might want to implement a proper MAC detection fallback
+          const mockMac = "00:1B:44:11:3A:B7";
+          setUserMacAddress(mockMac);
+          toast({
+            title: "Demo Mode",
+            description: "Using demo MAC address for testing purposes",
+            variant: "default",
+          });
+        }
 
-    // If there's an original URL, show redirect handler
-    if (origParam) {
-      setActiveTab("redirect");
-    }
-  }, []);
+        if (origParam) {
+          setActiveTab("redirect");
+        }
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Could not detect your device information",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingMac(false);
+      }
+    };
 
-  const { data: packages, isLoading } = useQuery({
+    detectMacAddress();
+  }, [toast]);
+
+  // Enhanced data fetching with error handling
+  const { 
+    data: packages, 
+    isLoading: isLoadingPackages,
+    error: packagesError 
+  } = useQuery({
     queryKey: ["access-packages"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -60,14 +112,31 @@ export default function Portal() {
       if (error) throw error;
       return data;
     },
+    retry: 2,
+    staleTime: 1000 * 60 * 5 // 5 minutes
   });
+
+  useEffect(() => {
+    if (packagesError) {
+      toast({
+        title: "Connection Error",
+        description: "Failed to load packages. Please check your connection.",
+        variant: "destructive",
+      });
+    }
+  }, [packagesError, toast]);
 
   const handlePackageSelect = (pkg: AccessPackage) => {
     setSelectedPackage(pkg);
+    // Analytics event could be tracked here
   };
 
   const handlePaymentCreated = (payment: Payment) => {
     setCurrentPayment(payment);
+    toast({
+      title: "Payment Initiated",
+      description: "Your payment request has been created successfully",
+    });
   };
 
   const handleBackToPackages = () => {
@@ -78,23 +147,45 @@ export default function Portal() {
   const handleSessionCreated = (session: any) => {
     setCurrentSession(session);
     setActiveTab("monitor");
-    
-    // Set authentication success flag for redirect handler
     sessionStorage.setItem('captive_portal_auth', 'success');
+    
+    toast({
+      title: "Session Started",
+      description: `You now have ${session.duration_minutes} minutes of access`,
+    });
   };
 
   const handleSessionExpired = () => {
     setCurrentSession(null);
     setActiveTab("packages");
     sessionStorage.removeItem('captive_portal_auth');
+    
+    toast({
+      title: "Session Ended",
+      description: "Your WiFi access has expired",
+    });
   };
 
-  if (isLoading) {
+  if (isLoadingPackages || isLoadingMac) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading WiFi packages...</p>
+        <div className="text-center space-y-4">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+            className="mx-auto"
+          >
+            <Loader2 className="h-12 w-12 text-indigo-600" />
+          </motion.div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold text-gray-800">
+              {isLoadingMac ? "Detecting your device" : "Loading WiFi packages"}
+            </h2>
+            <Progress value={isLoadingMac ? 30 : 70} className="w-48 mx-auto" />
+            <p className="text-gray-500 text-sm">
+              {isLoadingMac ? "Reading network information..." : "Fetching available options..."}
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -102,139 +193,162 @@ export default function Portal() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center mb-4">
-            <Wifi className="h-12 w-12 text-indigo-600 mr-3" />
-            <h1 className="text-4xl font-bold text-gray-900">WiFi Portal</h1>
+      <Toaster />
+      
+      {/* Header with improved styling */}
+      <header className="bg-white shadow-sm">
+        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+          <div className="flex items-center space-x-3">
+            <Wifi className="h-8 w-8 text-indigo-600" />
+            <h1 className="text-2xl font-bold text-gray-900">Premium WiFi Portal</h1>
           </div>
-          <p className="text-gray-600 max-w-2xl mx-auto">
-            Welcome! Select an internet access package and pay via M-Pesa to get connected.
-          </p>
-        </div>
-
-        
-
-        {/* Navigation Tabs */}
-        <div className="max-w-4xl mx-auto mb-6">
-          <div className="flex flex-wrap gap-2 justify-center">
-            <Button
-              variant={activeTab === "packages" ? "default" : "outline"}
-              onClick={() => setActiveTab("packages")}
-              className="flex items-center"
-            >
-              <Wifi className="h-4 w-4 mr-2" />
-              Packages
+          
+          <div className="flex items-center space-x-4">
+            <Button variant="ghost" size="sm" className="text-gray-600">
+              <HelpCircle className="h-4 w-4 mr-2" />
+              Help
             </Button>
-            <Button
-              variant={activeTab === "voucher" ? "default" : "outline"}
-              onClick={() => setActiveTab("voucher")}
-              className="flex items-center"
-            >
-              <Gift className="h-4 w-4 mr-2" />
-              Voucher
-            </Button>
-            <Button
-              variant={activeTab === "reconnect" ? "default" : "outline"}
-              onClick={() => setActiveTab("reconnect")}
-              className="flex items-center"
-            >
-              <Shield className="h-4 w-4 mr-2" />
-              Reconnect
-            </Button>
-            <Button
-              variant={activeTab === "monitor" ? "default" : "outline"}
-              onClick={() => setActiveTab("monitor")}
-              className="flex items-center"
-            >
-              <Activity className="h-4 w-4 mr-2" />
-              Monitor
-            </Button>
-            <Button
-              variant={activeTab === "redirect" ? "default" : "outline"}
-              onClick={() => setActiveTab("redirect")}
-              className="flex items-center"
-            >
-              <Globe className="h-4 w-4 mr-2" />
-              Redirect
-            </Button>
-            <Button
-              variant={activeTab === "router" ? "default" : "outline"}
-              onClick={() => setActiveTab("router")}
-              className="flex items-center"
-            >
-              <Router className="h-4 w-4 mr-2" />
-              Router Setup
-            </Button>
-            <Button
-              variant={activeTab === "admin" ? "default" : "outline"}
-              onClick={() => setActiveTab("admin")}
-              className="flex items-center"
-            >
-              <Shield className="h-4 w-4 mr-2" />
-              Admin
-            </Button>
-          </div>
-        </div>
-
-        {/* Main Content */}
-        <div className="max-w-4xl mx-auto">
-          <div className="grid gap-6">
-            {/* Session Timeout Manager - Show when there's an active session */}
             {currentSession && (
-              <SessionTimeoutManager 
-                sessionId={currentSession.id}
-                onSessionExpired={handleSessionExpired}
-              />
+              <div className="flex items-center space-x-2">
+                <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
+                <span className="text-sm font-medium text-gray-600">Connected</span>
+              </div>
             )}
+          </div>
+        </div>
+      </header>
 
-            {/* Main Content Area */}
-            {currentPayment ? (
-              <PaymentStatus 
-                payment={currentPayment}
-                onBack={handleBackToPackages}
-              />
-            ) : selectedPackage ? (
-              <PaymentForm
-                package={selectedPackage}
-                macAddress={userMacAddress}
-                onPaymentCreated={handlePaymentCreated}
-                onBack={handleBackToPackages}
-              />
-            ) : activeTab === "packages" ? (
-              <PackageSelection
-                packages={packages || []}
-                onSelectPackage={handlePackageSelect}
-              />
-            ) : activeTab === "voucher" ? (
-              <VoucherRedemption
-                macAddress={userMacAddress}
-                onSessionCreated={handleSessionCreated}
-              />
-            ) : activeTab === "reconnect" ? (
-              <ReconnectionCode
-                macAddress={userMacAddress}
-                onSessionActivated={handleSessionCreated}
-              />
-            ) : activeTab === "monitor" ? (
-              <SessionMonitor macAddress={userMacAddress} />
-            ) : activeTab === "redirect" ? (
-              <RedirectHandler userMacAddress={userMacAddress} />
-            ) : activeTab === "router" ? (
-              <RouterIntegration />
-            ) : activeTab === "admin" ? (
-              <AdminPanel />
-            ) : null}
+      <main className="container mx-auto px-4 py-8">
+        {/* User status bar */}
+        <div className="bg-white rounded-lg shadow-sm p-4 mb-6 flex justify-between items-center">
+          <div className="flex items-center space-x-4">
+            <div className="p-2 bg-indigo-50 rounded-full">
+              <User className="h-5 w-5 text-indigo-600" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-500">Device ID</p>
+              <p className="font-mono text-sm text-gray-800">{userMacAddress}</p>
+            </div>
+          </div>
+          
+          {currentSession && (
+            <div className="flex items-center space-x-4">
+              <div className="text-right">
+                <p className="text-sm font-medium text-gray-500">Session Time</p>
+                <p className="text-sm font-medium text-gray-800">
+                  {currentSession.duration_minutes} minutes remaining
+                </p>
+              </div>
+              <Clock className="h-5 w-5 text-gray-400" />
+            </div>
+          )}
+        </div>
+
+        {/* Navigation Tabs with improved UX */}
+        <div className="max-w-6xl mx-auto mb-8">
+          <div className="flex flex-wrap gap-2 justify-center">
+            {TAB_CONFIG.map((tab) => (
+              <Button
+                key={tab.id}
+                variant={activeTab === tab.id ? "default" : "outline"}
+                onClick={() => setActiveTab(tab.id)}
+                className="flex items-center transition-all"
+                size="sm"
+              >
+                <tab.icon className="h-4 w-4 mr-2" />
+                {tab.label}
+              </Button>
+            ))}
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="text-center mt-12 text-gray-500 text-sm">
-          <p>Need help? Contact support at support@wifiportal.com</p>
-          <p className="mt-1">Device MAC: {userMacAddress}</p>
+        {/* Main Content with smooth transitions */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="max-w-4xl mx-auto"
+          >
+            <div className="grid gap-6">
+              {/* Session Timeout Manager */}
+              {currentSession && (
+                <SessionTimeoutManager 
+                  sessionId={currentSession.id}
+                  onSessionExpired={handleSessionExpired}
+                />
+              )}
+
+              {/* Content Switching */}
+              {currentPayment ? (
+                <PaymentStatus 
+                  payment={currentPayment}
+                  onBack={handleBackToPackages}
+                />
+              ) : selectedPackage ? (
+                <PaymentForm
+                  package={selectedPackage}
+                  macAddress={userMacAddress}
+                  onPaymentCreated={handlePaymentCreated}
+                  onBack={handleBackToPackages}
+                />
+              ) : activeTab === "packages" ? (
+                <PackageSelection
+                  packages={packages || []}
+                  onSelectPackage={handlePackageSelect}
+                />
+              ) : activeTab === "voucher" ? (
+                <VoucherRedemption
+                  macAddress={userMacAddress}
+                  onSessionCreated={handleSessionCreated}
+                />
+              ) : activeTab === "reconnect" ? (
+                <ReconnectionCode
+                  macAddress={userMacAddress}
+                  onSessionActivated={handleSessionCreated}
+                />
+              ) : activeTab === "monitor" ? (
+                <SessionMonitor macAddress={userMacAddress} />
+              ) : activeTab === "redirect" ? (
+                <RedirectHandler userMacAddress={userMacAddress} />
+              ) : activeTab === "router" ? (
+                <RouterIntegration />
+              ) : activeTab === "admin" ? (
+                <AdminPanel />
+              ) : null}
+            </div>
+          </motion.div>
+        </AnimatePresence>
+      </main>
+
+      {/* Enhanced Footer */}
+      <footer className="bg-white border-t mt-12">
+        <div className="container mx-auto px-4 py-6">
+          <div className="flex flex-col md:flex-row justify-between items-center">
+            <div className="flex items-center space-x-4 mb-4 md:mb-0">
+              <div className="flex items-center space-x-2">
+                <Shield className="h-4 w-4 text-gray-400" />
+                <span className="text-sm text-gray-500">Secure Connection</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <CreditCard className="h-4 w-4 text-gray-400" />
+                <span className="text-sm text-gray-500">PCI Compliant</span>
+              </div>
+            </div>
+            
+            <div className="text-center md:text-right">
+              <p className="text-sm text-gray-500">
+                © {new Date().getFullYear()} Premium WiFi Services. All rights reserved.
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                Need help? <a href="mailto:support@premiumwifi.com" className="text-indigo-600 hover:underline">Contact our support team</a>
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
