@@ -42,7 +42,13 @@ export function AdminPanel() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("user_sessions")
-        .select("*, payments(*, access_packages(*))")
+        .select(`
+          *,
+          payments!inner(
+            *,
+            access_packages(*)
+          )
+        `)
         .eq("status", "active")
         .order("created_at", { ascending: false });
       
