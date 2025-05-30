@@ -22,6 +22,8 @@ serve(async (req) => {
 
     const { message, conversationId, macAddress, phoneNumber } = await req.json()
 
+    console.log('Received request:', { message, conversationId, macAddress, phoneNumber });
+
     // Get available packages for context
     const { data: packages } = await supabase
       .from('access_packages')
@@ -76,6 +78,11 @@ Current conversation context: You are helping a customer who wants to access WiF
       { role: "user", content: message }
     ];
 
+    console.log('Sending to Groq:', { 
+      model: 'llama-3.1-70b-versatile',
+      messagesCount: groqMessages.length 
+    });
+
     // Call Groq API
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -88,18 +95,29 @@ Current conversation context: You are helping a customer who wants to access WiF
         messages: groqMessages,
         temperature: 0.7,
         max_tokens: 500,
+        stream: false
       }),
     });
 
+    console.log('Groq response status:', groqResponse.status);
+
     if (!groqResponse.ok) {
-      throw new Error(`Groq API error: ${groqResponse.statusText}`);
+      const errorText = await groqResponse.text();
+      console.error('Groq API error response:', errorText);
+      throw new Error(`Groq API error: ${groqResponse.status} - ${errorText}`);
     }
 
     const groqData = await groqResponse.json();
+    console.log('Groq response data:', groqData);
+
+    if (!groqData.choices || !groqData.choices[0] || !groqData.choices[0].message) {
+      throw new Error('Invalid response structure from Groq API');
+    }
+
     const assistantMessage = groqData.choices[0].message.content;
 
     // Store user message
-    await supabase
+    const { error: userMessageError } = await supabase
       .from('chat_messages')
       .insert({
         conversation_id: conversationId,
@@ -107,14 +125,22 @@ Current conversation context: You are helping a customer who wants to access WiF
         content: message
       });
 
+    if (userMessageError) {
+      console.error('Error storing user message:', userMessageError);
+    }
+
     // Store assistant response
-    await supabase
+    const { error: assistantMessageError } = await supabase
       .from('chat_messages')
       .insert({
         conversation_id: conversationId,
         role: 'assistant',
         content: assistantMessage
       });
+
+    if (assistantMessageError) {
+      console.error('Error storing assistant message:', assistantMessageError);
+    }
 
     return new Response(
       JSON.stringify({ 
