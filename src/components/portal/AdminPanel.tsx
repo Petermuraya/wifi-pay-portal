@@ -13,6 +13,27 @@ import { Toaster } from "@/components/ui/toaster";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDuration } from "@/lib/utils";
 
+// Type definitions for the nested query result
+type SessionWithPaymentAndPackage = {
+  id: string;
+  phone_number: string | null;
+  mac_address: string;
+  status: string;
+  expires_at: string;
+  created_at: string;
+  payments: {
+    id: string;
+    amount: number;
+    phone_number: string;
+    access_packages: {
+      id: string;
+      name: string;
+      duration_minutes: number;
+      price: number;
+    } | null;
+  } | null;
+};
+
 export function AdminPanel() {
   const [adminKey, setAdminKey] = useState("");
   const [selectedPackage, setSelectedPackage] = useState("");
@@ -43,17 +64,54 @@ export function AdminPanel() {
       const { data, error } = await supabase
         .from("user_sessions")
         .select(`
-          *,
-          payments!inner(
-            *,
-            access_packages(*)
-          )
+          id,
+          phone_number,
+          mac_address,
+          status,
+          expires_at,
+          created_at,
+          payment_id
         `)
         .eq("status", "active")
         .order("created_at", { ascending: false });
       
       if (error) throw error;
-      return data;
+
+      // Fetch payment and package data separately to avoid complex joins
+      const sessionsWithDetails = await Promise.all(
+        (data || []).map(async (session) => {
+          if (session.payment_id) {
+            const { data: payment, error: paymentError } = await supabase
+              .from("payments")
+              .select(`
+                id,
+                amount,
+                phone_number,
+                session_id
+              `)
+              .eq("session_id", session.id)
+              .single();
+
+            if (!paymentError && payment) {
+              // Get the access package through a separate query if needed
+              // For now, we'll use a simpler approach
+              return {
+                ...session,
+                payments: {
+                  ...payment,
+                  access_packages: null // We'll handle this differently
+                }
+              };
+            }
+          }
+          return {
+            ...session,
+            payments: null
+          };
+        })
+      );
+
+      return sessionsWithDetails as SessionWithPaymentAndPackage[];
     },
     enabled: isAuthenticated,
     refetchInterval: 15000, // Refresh every 15 seconds
