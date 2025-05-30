@@ -32,6 +32,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
 import type { Database } from "@/integrations/supabase/types";
+import { ChatBot } from "@/components/portal/ChatBot";
 
 type AccessPackage = Database["public"]["Tables"]["access_packages"]["Row"];
 type Payment = Database["public"]["Tables"]["payments"]["Row"];
@@ -349,6 +350,15 @@ export default function Portal() {
           </div>
         </div>
       </footer>
+
+      {/* Add ChatBot */}
+      {!isLoadingMac && userMacAddress && (
+        <ChatBot
+          macAddress={userMacAddress}
+          phoneNumber={currentSession?.phone_number}
+          onSessionCreated={handleSessionCreated}
+        />
+      )}
     </div>
   );
 }
