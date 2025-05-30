@@ -7,7 +7,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const GROQ_API_KEY = "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";
+const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY') || "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";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -79,11 +79,11 @@ Current conversation context: You are helping a customer who wants to access WiF
     ];
 
     console.log('Sending to Groq:', { 
-      model: 'llama-3.1-70b-versatile',
+      model: 'llama-3.1-8b-instant',
       messagesCount: groqMessages.length 
     });
 
-    // Call Groq API
+    // Call Groq API with supported model
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -91,7 +91,7 @@ Current conversation context: You are helping a customer who wants to access WiF
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.1-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: groqMessages,
         temperature: 0.7,
         max_tokens: 500,
