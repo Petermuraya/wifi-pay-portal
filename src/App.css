@@ -1,3 +1,4 @@
+
 #root {
   max-width: 1280px;
   margin: 0 auto;
@@ -39,4 +40,37 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* Custom typing effect for chatbot */
+.typing-effect {
+  overflow: hidden;
+  border-right: 2px solid #10b981;
+  white-space: nowrap;
+  animation: typing 2s steps(40, end), blink-caret 0.75s step-end infinite;
+}
+
+@keyframes typing {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+@keyframes blink-caret {
+  from, to { border-color: transparent; }
+  50% { border-color: #10b981; }
+}
+
+/* Enhanced floating animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+.float-animation {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Smooth scroll for chat messages */
+.scroll-smooth {
+  scroll-behavior: smooth;
 }
