@@ -44,32 +44,46 @@ serve(async (req) => {
       content: msg.content
     })) || [];
 
-    // Create system prompt with package information
+    // Check for M-Pesa payment intent
+    const paymentIntent = detectPaymentIntent(message, conversationHistory);
+    
+    // Check for reconnection code intent
+    const reconnectionIntent = detectReconnectionIntent(message);
+
+    // Create system prompt with package information and smart capabilities
     const packageInfo = packages?.map(pkg => 
       `${pkg.name}: KSh ${pkg.price} for ${pkg.duration_minutes} minutes`
     ).join('\n') || '';
 
-    const systemPrompt = `You are a helpful WiFi customer service assistant for Premium WiFi Services. Your role is to help customers:
+    const systemPrompt = `You are an intelligent WiFi customer service assistant for Premium WiFi Services. You can help customers with:
 
-1. Purchase WiFi packages
-2. Get reconnection codes for existing payments
-3. Answer questions about available packages
+1. **WiFi Package Purchases & M-Pesa Payments**
+2. **Reconnection using existing codes**
+3. **Technical support and questions**
 
 Available WiFi Packages:
 ${packageInfo}
 
-Guidelines:
-- Be friendly and professional
-- Keep responses concise but helpful
-- For package purchases, collect phone number for M-Pesa payment
-- For reconnections, ask for their phone number to find existing payments
-- Always mention that payments are processed via M-Pesa
-- If asked about technical issues, direct them to support
+INTELLIGENT CAPABILITIES:
+- When a customer provides a phone number and wants to purchase a package, automatically initiate M-Pesa STK push
+- When a customer provides a 6-digit code, check if it's a reconnection code
+- Remember previous conversations and context
+- Be proactive in suggesting solutions
+
+PAYMENT PROCESSING:
+- If customer shows payment intent with phone number, guide them through M-Pesa payment
+- Explain the STK push process clearly
+- Provide payment status updates
+
+RECONNECTION CODES:
+- 6-digit codes are typically reconnection codes
+- Guide customers through the reconnection process
+- Verify code validity
 
 Customer's MAC Address: ${macAddress}
 ${phoneNumber ? `Customer's Phone: ${phoneNumber}` : 'No phone number provided yet'}
 
-Current conversation context: You are helping a customer who wants to access WiFi.`;
+Be conversational, helpful, and proactive. If you detect payment or reconnection intent, guide them accordingly.`;
 
     // Prepare messages for Groq
     const groqMessages = [
@@ -80,10 +94,12 @@ Current conversation context: You are helping a customer who wants to access WiF
 
     console.log('Sending to Groq:', { 
       model: 'llama-3.1-8b-instant',
-      messagesCount: groqMessages.length 
+      messagesCount: groqMessages.length,
+      paymentIntent,
+      reconnectionIntent
     });
 
-    // Call Groq API with supported model
+    // Call Groq API
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -114,7 +130,42 @@ Current conversation context: You are helping a customer who wants to access WiF
       throw new Error('Invalid response structure from Groq API');
     }
 
-    const assistantMessage = groqData.choices[0].message.content;
+    let assistantMessage = groqData.choices[0].message.content;
+
+    // Handle smart payment processing
+    if (paymentIntent.detected && paymentIntent.phoneNumber && paymentIntent.packageId) {
+      try {
+        const paymentResult = await processPayment(supabase, {
+          phoneNumber: paymentIntent.phoneNumber,
+          packageId: paymentIntent.packageId,
+          macAddress
+        });
+        
+        assistantMessage += `\n\n💳 I've initiated your M-Pesa payment of KSh ${paymentResult.amount}. Please check your phone for the payment prompt and enter your M-Pesa PIN to complete the transaction.`;
+      } catch (error) {
+        console.error('Payment processing error:', error);
+        assistantMessage += `\n\n❌ I encountered an issue processing your payment. Please try again or contact support.`;
+      }
+    }
+
+    // Handle smart reconnection
+    if (reconnectionIntent.detected && reconnectionIntent.code) {
+      try {
+        const reconnectionResult = await processReconnection(supabase, {
+          code: reconnectionIntent.code,
+          macAddress
+        });
+        
+        if (reconnectionResult.success) {
+          assistantMessage += `\n\n✅ Reconnection successful! Your internet access has been restored using code ${reconnectionIntent.code}.`;
+        } else {
+          assistantMessage += `\n\n❌ Invalid or expired reconnection code. Please check the code or make a new payment.`;
+        }
+      } catch (error) {
+        console.error('Reconnection error:', error);
+        assistantMessage += `\n\n❌ I encountered an issue with the reconnection code. Please try again or contact support.`;
+      }
+    }
 
     // Store user message
     const { error: userMessageError } = await supabase
@@ -165,3 +216,144 @@ Current conversation context: You are helping a customer who wants to access WiF
     )
   }
 })
+
+// Smart intent detection functions
+function detectPaymentIntent(message: string, history: any[]) {
+  const phoneRegex = /(?:0|\+254|254)?[7][0-9]{8}/g;
+  const paymentKeywords = ['buy', 'purchase', 'pay', 'package', 'internet', 'wifi', 'access'];
+  
+  const phoneMatch = message.match(phoneRegex);
+  const hasPaymentKeywords = paymentKeywords.some(keyword => 
+    message.toLowerCase().includes(keyword)
+  );
+  
+  // Look for package references
+  let packageId = null;
+  if (message.includes('20') || message.includes('1 hour')) packageId = '1-hour';
+  if (message.includes('50') || message.includes('3 hour')) packageId = '3-hour';
+  if (message.includes('100') || message.includes('day')) packageId = 'day';
+  
+  return {
+    detected: phoneMatch && (hasPaymentKeywords || packageId),
+    phoneNumber: phoneMatch ? phoneMatch[0] : null,
+    packageId
+  };
+}
+
+function detectReconnectionIntent(message: string) {
+  const codeRegex = /\b\d{6}\b/g;
+  const reconnectionKeywords = ['reconnect', 'code', 'access'];
+  
+  const codeMatch = message.match(codeRegex);
+  const hasReconnectionKeywords = reconnectionKeywords.some(keyword => 
+    message.toLowerCase().includes(keyword)
+  );
+  
+  return {
+    detected: codeMatch && (hasReconnectionKeywords || codeMatch.length === 1),
+    code: codeMatch ? codeMatch[0] : null
+  };
+}
+
+// Smart payment processing
+async function processPayment(supabase: any, { phoneNumber, packageId, macAddress }: any) {
+  // Get package details
+  const { data: packages } = await supabase
+    .from('access_packages')
+    .select('*')
+    .eq('is_active', true);
+  
+  const selectedPackage = packages?.find((pkg: any) => {
+    if (packageId === '1-hour') return pkg.duration_minutes === 60;
+    if (packageId === '3-hour') return pkg.duration_minutes === 180;
+    if (packageId === 'day') return pkg.duration_minutes === 1440;
+    return pkg.price === 20; // Default to cheapest
+  }) || packages?.[0];
+  
+  if (!selectedPackage) throw new Error('No packages available');
+  
+  // Create session
+  const { data: session, error: sessionError } = await supabase
+    .from("user_sessions")
+    .insert({
+      mac_address: macAddress,
+      phone_number: phoneNumber,
+      expires_at: new Date(Date.now() + selectedPackage.duration_minutes * 60 * 1000).toISOString(),
+    })
+    .select()
+    .single();
+
+  if (sessionError) throw sessionError;
+
+  // Create payment
+  const { data: payment, error: paymentError } = await supabase
+    .from("payments")
+    .insert({
+      session_id: session.id,
+      phone_number: phoneNumber,
+      amount: selectedPackage.price,
+      status: "pending",
+    })
+    .select()
+    .single();
+
+  if (paymentError) throw paymentError;
+
+  // Initiate STK Push
+  const { error: stkError } = await supabase.functions.invoke('mpesa-stk-push', {
+    body: {
+      paymentId: payment.id,
+      phoneNumber: phoneNumber,
+      amount: selectedPackage.price
+    }
+  });
+
+  if (stkError) throw stkError;
+  
+  return { amount: selectedPackage.price, paymentId: payment.id };
+}
+
+// Smart reconnection processing
+async function processReconnection(supabase: any, { code, macAddress }: any) {
+  // Find payment with reconnection code
+  const { data: payment, error } = await supabase
+    .from("payments")
+    .select("*, user_sessions(*)")
+    .eq("reconnection_code", code)
+    .eq("reconnection_code_used", false)
+    .eq("status", "completed")
+    .single();
+
+  if (error || !payment) return { success: false };
+  
+  // Verify MAC address matches
+  if (payment.user_sessions?.mac_address !== macAddress) {
+    return { success: false };
+  }
+
+  // Mark code as used
+  await supabase
+    .from("payments")
+    .update({ reconnection_code_used: true })
+    .eq("id", payment.id);
+
+  // Activate session
+  await supabase
+    .from("user_sessions")
+    .update({ 
+      status: "active",
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", payment.session_id);
+
+  // Call RADIUS auth
+  await supabase.functions.invoke('radius-auth', {
+    body: { 
+      action: 'authorize', 
+      sessionId: payment.session_id, 
+      macAddress 
+    }
+  });
+
+  return { success: true };
+}
