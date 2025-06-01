@@ -21,9 +21,9 @@ export function useConversationData({
   username 
 }: UseConversationDataProps) {
   // Create or get existing conversation
-  const conversationQuery = useQuery({
+  const conversationQuery = useQuery<ChatConversation>({
     queryKey: ["chat-conversation", macAddress, username],
-    queryFn: async (): Promise<ChatConversation> => {
+    queryFn: async () => {
       // Try to find existing conversation for this MAC address and username
       let query = supabase
         .from("chat_conversations")
@@ -64,9 +64,9 @@ export function useConversationData({
   });
 
   // Get chat messages with optimized polling
-  const messagesQuery = useQuery({
+  const messagesQuery = useQuery<ChatMessageType[]>({
     queryKey: ["chat-messages", conversationId],
-    queryFn: async (): Promise<ChatMessageType[]> => {
+    queryFn: async () => {
       if (!conversationId) {
         return [];
       }
