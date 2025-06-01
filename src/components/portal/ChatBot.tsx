@@ -117,7 +117,12 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
               )}
 
               {messages?.map((msg) => (
-                <ChatMessage key={msg.id} message={msg} />
+                <ChatMessage key={msg.id} message={{
+                  id: msg.id,
+                  content: msg.content,
+                  role: msg.role as 'user' | 'assistant',
+                  created_at: msg.created_at
+                }} />
               ))}
 
               {sendMessagePending && <TypingIndicator />}
