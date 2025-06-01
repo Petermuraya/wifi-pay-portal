@@ -1,4 +1,3 @@
-
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { ChatMessageType, ChatConversation } from "@/types/chat";
@@ -9,6 +8,7 @@ interface UseConversationDataProps {
   conversationId: string | null;
   setConversationId: (id: string) => void;
   isOnline: boolean;
+  username?: string;
 }
 
 export function useConversationData({ 
@@ -16,17 +16,24 @@ export function useConversationData({
   phoneNumber, 
   conversationId, 
   setConversationId, 
-  isOnline 
+  isOnline,
+  username 
 }: UseConversationDataProps) {
   // Create or get existing conversation
   const { data: conversation } = useQuery({
-    queryKey: ["chat-conversation", macAddress],
+    queryKey: ["chat-conversation", macAddress, username],
     queryFn: async (): Promise<ChatConversation> => {
-      // Try to find existing conversation for this MAC address
-      const { data: existing } = await supabase
+      // Try to find existing conversation for this MAC address and username
+      let query = supabase
         .from("chat_conversations")
         .select("*")
-        .eq("mac_address", macAddress)
+        .eq("mac_address", macAddress);
+      
+      if (username) {
+        query = query.eq("username", username);
+      }
+      
+      const { data: existing } = await query
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
@@ -42,6 +49,7 @@ export function useConversationData({
         .insert({
           mac_address: macAddress,
           phone_number: phoneNumber || null,
+          username: username || null,
         })
         .select()
         .single();
@@ -51,6 +59,7 @@ export function useConversationData({
       return newConversation;
     },
     staleTime: 0, // Always refetch to ensure fresh conversation
+    enabled: !!username, // Only run when authenticated
   });
 
   // Get chat messages with optimized polling

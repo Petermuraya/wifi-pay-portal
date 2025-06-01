@@ -1,4 +1,3 @@
-
 import { useRef, useEffect } from "react";
 import { useOnlineStatus } from "./useOnlineStatus";
 import { useConversationState } from "./useConversationState";
@@ -6,7 +5,7 @@ import { useConversationData } from "./useConversationData";
 import { useChatActions } from "./useChatActions";
 import type { UseChatConversationProps } from "@/types/chat";
 
-export function useChatConversation({ macAddress, phoneNumber, onSessionCreated }: UseChatConversationProps) {
+export function useChatConversation({ macAddress, phoneNumber, onSessionCreated, username }: UseChatConversationProps & { username?: string }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isOnline = useOnlineStatus();
@@ -29,6 +28,7 @@ export function useChatConversation({ macAddress, phoneNumber, onSessionCreated 
     conversationId,
     setConversationId,
     isOnline,
+    username,
   });
 
   const {
@@ -47,6 +47,7 @@ export function useChatConversation({ macAddress, phoneNumber, onSessionCreated 
     message,
     setMessage,
     inputRef,
+    username,
   });
 
   // Auto-scroll to bottom when new messages arrive

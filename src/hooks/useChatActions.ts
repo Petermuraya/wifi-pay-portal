@@ -1,4 +1,3 @@
-
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -13,6 +12,7 @@ interface UseChatActionsProps {
   message: string;
   setMessage: (message: string) => void;
   inputRef: React.RefObject<HTMLTextAreaElement>;
+  username?: string;
 }
 
 export function useChatActions({
@@ -24,6 +24,7 @@ export function useChatActions({
   message,
   setMessage,
   inputRef,
+  username,
 }: UseChatActionsProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -43,6 +44,7 @@ export function useChatActions({
           conversationId,
           macAddress,
           phoneNumber,
+          username,
           conversationHistory: conversationHistory.map(msg => ({
             role: msg.role,
             content: msg.content
