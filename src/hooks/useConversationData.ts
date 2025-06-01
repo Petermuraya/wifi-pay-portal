@@ -1,7 +1,23 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { ChatMessageType, ChatConversation } from "@/types/chat";
+
+interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  content: string;
+  role: string;
+  created_at: string;
+}
+
+interface ChatConversation {
+  id: string;
+  mac_address: string;
+  phone_number: string | null;
+  username: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 interface UseConversationDataProps {
   macAddress: string;
@@ -23,7 +39,7 @@ export function useConversationData({
   // Create or get existing conversation
   const conversationQuery = useQuery({
     queryKey: ["chat-conversation", macAddress, username],
-    queryFn: async () => {
+    queryFn: async (): Promise<ChatConversation> => {
       // Try to find existing conversation for this MAC address and username
       let query = supabase
         .from("chat_conversations")
@@ -66,7 +82,7 @@ export function useConversationData({
   // Get chat messages with optimized polling
   const messagesQuery = useQuery({
     queryKey: ["chat-messages", conversationId],
-    queryFn: async () => {
+    queryFn: async (): Promise<ChatMessage[]> => {
       if (!conversationId) {
         return [];
       }
@@ -86,8 +102,8 @@ export function useConversationData({
   });
 
   return {
-    conversation: conversationQuery.data as ChatConversation | undefined,
-    messages: messagesQuery.data as ChatMessageType[] | undefined,
+    conversation: conversationQuery.data,
+    messages: messagesQuery.data,
     messagesLoading: messagesQuery.isLoading,
     refetchMessages: messagesQuery.refetch,
   };

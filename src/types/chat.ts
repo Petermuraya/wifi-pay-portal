@@ -1,8 +1,23 @@
 
 import type { Database } from "@/integrations/supabase/types";
 
-export type ChatMessageType = Database["public"]["Tables"]["chat_messages"]["Row"];
-export type ChatConversation = Database["public"]["Tables"]["chat_conversations"]["Row"];
+// Simplified type definitions to avoid deep type instantiation
+export interface ChatMessageType {
+  id: string;
+  conversation_id: string;
+  content: string;
+  role: string;
+  created_at: string;
+}
+
+export interface ChatConversation {
+  id: string;
+  mac_address: string;
+  phone_number: string | null;
+  username: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface UseChatConversationProps {
   macAddress: string;
