@@ -1,3 +1,4 @@
+
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { ChatMessageType, ChatConversation } from "@/types/chat";
@@ -20,9 +21,9 @@ export function useConversationData({
   username 
 }: UseConversationDataProps) {
   // Create or get existing conversation
-  const { data: conversation } = useQuery({
+  const { data: conversation } = useQuery<ChatConversation>({
     queryKey: ["chat-conversation", macAddress, username],
-    queryFn: async (): Promise<ChatConversation> => {
+    queryFn: async () => {
       // Try to find existing conversation for this MAC address and username
       let query = supabase
         .from("chat_conversations")
@@ -63,9 +64,9 @@ export function useConversationData({
   });
 
   // Get chat messages with optimized polling
-  const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
+  const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery<ChatMessageType[]>({
     queryKey: ["chat-messages", conversationId],
-    queryFn: async (): Promise<ChatMessageType[]> => {
+    queryFn: async () => {
       if (!conversationId) return [];
       
       const { data, error } = await supabase
@@ -75,7 +76,7 @@ export function useConversationData({
         .order("created_at");
       
       if (error) throw error;
-      return data;
+      return data || [];
     },
     enabled: !!conversationId && isOnline,
     refetchInterval: 2000, // Poll every 2 seconds when active
