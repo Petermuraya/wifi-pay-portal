@@ -21,7 +21,7 @@ export function useConversationData({
   username 
 }: UseConversationDataProps) {
   // Create or get existing conversation
-  const { data: conversation } = useQuery<ChatConversation>({
+  const { data: conversation } = useQuery({
     queryKey: ["chat-conversation", macAddress, username],
     queryFn: async () => {
       // Try to find existing conversation for this MAC address and username
@@ -41,7 +41,7 @@ export function useConversationData({
 
       if (existing) {
         setConversationId(existing.id);
-        return existing;
+        return existing as ChatConversation;
       }
 
       // Create new conversation
@@ -57,17 +57,17 @@ export function useConversationData({
 
       if (error) throw error;
       setConversationId(newConversation.id);
-      return newConversation;
+      return newConversation as ChatConversation;
     },
     staleTime: 0, // Always refetch to ensure fresh conversation
     enabled: !!username, // Only run when authenticated
   });
 
   // Get chat messages with optimized polling
-  const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery<ChatMessageType[]>({
+  const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["chat-messages", conversationId],
     queryFn: async () => {
-      if (!conversationId) return [];
+      if (!conversationId) return [] as ChatMessageType[];
       
       const { data, error } = await supabase
         .from("chat_messages")
@@ -76,7 +76,7 @@ export function useConversationData({
         .order("created_at");
       
       if (error) throw error;
-      return data || [];
+      return (data || []) as ChatMessageType[];
     },
     enabled: !!conversationId && isOnline,
     refetchInterval: 2000, // Poll every 2 seconds when active
