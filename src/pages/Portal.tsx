@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -169,7 +170,7 @@ export default function Portal() {
 
   if (isLoadingPackages || isLoadingMac) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-purple-50 flex items-center justify-center">
         <div className="text-center space-y-4">
           <motion.div
             animate={{ rotate: 360 }}
@@ -179,11 +180,11 @@ export default function Portal() {
             <Loader2 className="h-12 w-12 text-indigo-600" />
           </motion.div>
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-gray-800">
+            <h2 className="text-xl font-semibold text-slate-800">
               {isLoadingMac ? "Detecting your device" : "Loading WiFi packages"}
             </h2>
             <Progress value={isLoadingMac ? 30 : 70} className="w-48 mx-auto" />
-            <p className="text-gray-500 text-sm">
+            <p className="text-slate-500 text-sm">
               {isLoadingMac ? "Reading network information..." : "Fetching available options..."}
             </p>
           </div>
@@ -193,26 +194,30 @@ export default function Portal() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-purple-50">
       <Toaster />
       
-      {/* Header with improved styling */}
-      <header className="bg-white shadow-sm">
+      {/* Header with Stripe-inspired styling */}
+      <header className="bg-white/80 backdrop-blur-lg shadow-sm border-b border-slate-200/50">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center space-x-3">
-            <Wifi className="h-8 w-8 text-indigo-600" />
-            <h1 className="text-2xl font-bold text-gray-900">Premium WiFi Portal</h1>
+            <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl">
+              <Wifi className="h-6 w-6 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
+              Premium WiFi Portal
+            </h1>
           </div>
           
           <div className="flex items-center space-x-4">
-            <Button variant="ghost" size="sm" className="text-gray-600">
+            <Button variant="ghost" size="sm" className="text-slate-600 hover:text-indigo-600 hover:bg-indigo-50">
               <HelpCircle className="h-4 w-4 mr-2" />
               Help
             </Button>
             {currentSession && (
               <div className="flex items-center space-x-2">
-                <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-sm font-medium text-gray-600">Connected</span>
+                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                <span className="text-sm font-medium text-slate-600">Connected</span>
               </div>
             )}
           </div>
@@ -220,40 +225,44 @@ export default function Portal() {
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        {/* User status bar */}
-        <div className="bg-white rounded-lg shadow-sm p-4 mb-6 flex justify-between items-center">
+        {/* User status bar with Stripe-inspired design */}
+        <div className="bg-white/70 backdrop-blur-lg rounded-xl shadow-sm p-4 mb-6 flex justify-between items-center border border-slate-200/50">
           <div className="flex items-center space-x-4">
-            <div className="p-2 bg-indigo-50 rounded-full">
+            <div className="p-2 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-xl">
               <User className="h-5 w-5 text-indigo-600" />
             </div>
             <div>
-              <p className="text-sm font-medium text-gray-500">Device ID</p>
-              <p className="font-mono text-sm text-gray-800">{userMacAddress}</p>
+              <p className="text-sm font-medium text-slate-500">Device ID</p>
+              <p className="font-mono text-sm text-slate-800">{userMacAddress}</p>
             </div>
           </div>
           
           {currentSession && (
             <div className="flex items-center space-x-4">
               <div className="text-right">
-                <p className="text-sm font-medium text-gray-500">Session Time</p>
-                <p className="text-sm font-medium text-gray-800">
+                <p className="text-sm font-medium text-slate-500">Session Time</p>
+                <p className="text-sm font-medium text-slate-800">
                   {currentSession.duration_minutes} minutes remaining
                 </p>
               </div>
-              <Clock className="h-5 w-5 text-gray-400" />
+              <Clock className="h-5 w-5 text-slate-400" />
             </div>
           )}
         </div>
 
-        {/* Navigation Tabs with improved UX */}
+        {/* Navigation Tabs with Stripe-inspired design */}
         <div className="max-w-6xl mx-auto mb-8">
-          <div className="flex flex-wrap gap-2 justify-center">
+          <div className="flex flex-wrap gap-2 justify-center bg-white/50 backdrop-blur-lg rounded-2xl p-2 border border-slate-200/50">
             {TAB_CONFIG.map((tab) => (
               <Button
                 key={tab.id}
-                variant={activeTab === tab.id ? "default" : "outline"}
+                variant={activeTab === tab.id ? "default" : "ghost"}
                 onClick={() => setActiveTab(tab.id)}
-                className="flex items-center transition-all"
+                className={`flex items-center transition-all rounded-xl ${
+                  activeTab === tab.id 
+                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg' 
+                    : 'text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50'
+                }`}
                 size="sm"
               >
                 <tab.icon className="h-4 w-4 mr-2" />
@@ -324,26 +333,26 @@ export default function Portal() {
         </AnimatePresence>
       </main>
 
-      {/* Enhanced Footer */}
-      <footer className="bg-white border-t mt-12">
+      {/* Enhanced Footer with Stripe-inspired design */}
+      <footer className="bg-white/60 backdrop-blur-lg border-t border-slate-200/50 mt-12">
         <div className="container mx-auto px-4 py-6">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center space-x-4 mb-4 md:mb-0">
               <div className="flex items-center space-x-2">
-                <Shield className="h-4 w-4 text-gray-400" />
-                <span className="text-sm text-gray-500">Secure Connection</span>
+                <Shield className="h-4 w-4 text-slate-400" />
+                <span className="text-sm text-slate-500">Secure Connection</span>
               </div>
               <div className="flex items-center space-x-2">
-                <CreditCard className="h-4 w-4 text-gray-400" />
-                <span className="text-sm text-gray-500">PCI Compliant</span>
+                <CreditCard className="h-4 w-4 text-slate-400" />
+                <span className="text-sm text-slate-500">PCI Compliant</span>
               </div>
             </div>
             
             <div className="text-center md:text-right">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-slate-500">
                 © {new Date().getFullYear()} Premium WiFi Services. All rights reserved.
               </p>
-              <p className="text-sm text-gray-500 mt-1">
+              <p className="text-sm text-slate-500 mt-1">
                 Need help? <a href="mailto:support@premiumwifi.com" className="text-indigo-600 hover:underline">Contact our support team</a>
               </p>
             </div>

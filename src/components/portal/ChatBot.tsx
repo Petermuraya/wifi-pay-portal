@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,6 +22,8 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
   const [isMinimized, setIsMinimized] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isHidden, setIsHidden] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
   
   const {
     isAuthenticated,
@@ -35,7 +37,6 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
     message,
     setMessage,
     isOnline,
-    messagesEndRef,
     inputRef,
     messages,
     messagesLoading,
@@ -52,6 +53,13 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
     onSessionCreated,
     username: currentUser 
   });
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messagesEndRef.current && messages?.length > 0) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
 
   // Focus input when opened
   useEffect(() => {
@@ -89,10 +97,10 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
           onClick={() => setIsHidden(false)}
           variant="outline"
           size="sm"
-          className="bg-white/90 backdrop-blur-sm shadow-lg border-emerald-200 hover:border-emerald-300"
+          className="bg-white/95 backdrop-blur-sm shadow-lg border-slate-200 hover:border-indigo-300 hover:bg-indigo-50"
         >
-          <MessageCircle className="h-4 w-4 mr-2" />
-          WiFi Assistant
+          <MessageCircle className="h-4 w-4 mr-2 text-indigo-600" />
+          <span className="text-slate-700">WiFi Assistant</span>
         </Button>
       </div>
     );
@@ -105,10 +113,10 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
         <div className="fixed bottom-6 right-6 z-50">
           <Button
             onClick={() => setIsMinimized(false)}
-            className="rounded-full w-16 h-16 shadow-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 transition-all duration-300 transform hover:scale-110 hover:shadow-3xl"
+            className="rounded-full w-16 h-16 shadow-2xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 transform hover:scale-110 hover:shadow-3xl border-0"
             size="lg"
           >
-            <MessageCircle className="h-7 w-7" />
+            <MessageCircle className="h-7 w-7 text-white" />
           </Button>
         </div>
       );
@@ -123,20 +131,20 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
         <div className="relative">
           <Button
             onClick={() => setIsMinimized(false)}
-            className="rounded-full w-16 h-16 shadow-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 transition-all duration-300 transform hover:scale-110 hover:shadow-3xl"
+            className="rounded-full w-16 h-16 shadow-2xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 transform hover:scale-110 hover:shadow-3xl border-0"
             size="lg"
           >
-            <MessageCircle className="h-7 w-7" />
+            <MessageCircle className="h-7 w-7 text-white" />
           </Button>
           
           {/* User indicator */}
-          <div className="absolute -top-2 -left-2 bg-white rounded-full px-2 py-1 text-xs font-medium text-emerald-600 shadow-sm border border-emerald-200">
+          <div className="absolute -top-2 -left-2 bg-white rounded-full px-2 py-1 text-xs font-medium text-indigo-600 shadow-sm border border-indigo-200">
             {currentUser}
           </div>
           
           {/* Message count notification */}
           {messages && messages.length > 0 && (
-            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full animate-pulse flex items-center justify-center">
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-gradient-to-r from-pink-500 to-rose-500 rounded-full animate-pulse flex items-center justify-center shadow-lg">
               <span className="text-xs text-white font-bold">{messages.length}</span>
             </div>
           )}
@@ -146,7 +154,7 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
             onClick={handleHideChatbot}
             variant="ghost"
             size="sm"
-            className="absolute -top-8 -right-8 h-6 w-6 p-0 bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-700 rounded-full shadow-sm"
+            className="absolute -top-8 -right-8 h-6 w-6 p-0 bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded-full shadow-sm"
             title="Hide chatbot"
           >
             <X className="h-3 w-3" />
@@ -161,8 +169,8 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
 
   return (
     <div className={`fixed bottom-6 right-6 z-50 ${chatWidth} ${chatHeight} transition-all duration-300 transform`}>
-      <Card className="h-full flex flex-col shadow-2xl border-2 border-emerald-200 bg-white/95 backdrop-blur-lg rounded-2xl overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white">
+      <Card className="h-full flex flex-col shadow-2xl border border-slate-200 bg-white/98 backdrop-blur-lg rounded-2xl overflow-hidden">
+        <CardHeader className="pb-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <div className="p-1 bg-white/20 rounded-full">
@@ -205,16 +213,16 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
           </div>
         </CardHeader>
 
-        <CardContent className="flex-1 flex flex-col p-0">
-          <ScrollArea className="flex-1 p-4">
-            <div className="space-y-4">
+        <CardContent className="flex-1 flex flex-col p-0 bg-gradient-to-b from-slate-50 to-white">
+          <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
+            <div className="space-y-2">
               {showWelcome && (
-                <div className="flex items-start space-x-3 animate-fade-in">
-                  <div className="p-2 bg-gradient-to-br from-emerald-400 to-teal-500 rounded-full shadow-sm">
+                <div className="flex items-start space-x-3 mb-4 animate-fade-in">
+                  <div className="flex-shrink-0 p-2 bg-gradient-to-br from-slate-600 to-slate-700 rounded-full shadow-sm">
                     <MessageCircle className="h-4 w-4 text-white" />
                   </div>
-                  <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl rounded-tl-sm p-4 max-w-[280px] shadow-sm border border-emerald-100">
-                    <p className="text-sm text-gray-800 leading-relaxed">
+                  <div className="bg-white rounded-2xl rounded-tl-sm p-4 max-w-[300px] shadow-sm border border-slate-200">
+                    <p className="text-sm text-slate-800 leading-relaxed">
                       🌟 <strong>Welcome back, {currentUser}!</strong>
                       <br /><br />
                       I'm here to help you with:
