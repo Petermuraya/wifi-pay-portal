@@ -21,7 +21,7 @@ export function useConversationData({
   username 
 }: UseConversationDataProps) {
   // Create or get existing conversation
-  const conversationQuery = useQuery<ChatConversation>({
+  const conversationQuery = useQuery({
     queryKey: ["chat-conversation", macAddress, username],
     queryFn: async () => {
       // Try to find existing conversation for this MAC address and username
@@ -41,7 +41,7 @@ export function useConversationData({
 
       if (existing) {
         setConversationId(existing.id);
-        return existing as ChatConversation;
+        return existing;
       }
 
       // Create new conversation
@@ -57,14 +57,14 @@ export function useConversationData({
 
       if (error) throw error;
       setConversationId(newConversation.id);
-      return newConversation as ChatConversation;
+      return newConversation;
     },
     staleTime: 0, // Always refetch to ensure fresh conversation
     enabled: !!username, // Only run when authenticated
   });
 
   // Get chat messages with optimized polling
-  const messagesQuery = useQuery<ChatMessageType[]>({
+  const messagesQuery = useQuery({
     queryKey: ["chat-messages", conversationId],
     queryFn: async () => {
       if (!conversationId) {
@@ -78,7 +78,7 @@ export function useConversationData({
         .order("created_at");
       
       if (error) throw error;
-      return (data || []) as ChatMessageType[];
+      return data || [];
     },
     enabled: !!conversationId && isOnline,
     refetchInterval: 2000, // Poll every 2 seconds when active
@@ -86,8 +86,8 @@ export function useConversationData({
   });
 
   return {
-    conversation: conversationQuery.data,
-    messages: messagesQuery.data,
+    conversation: conversationQuery.data as ChatConversation | undefined,
+    messages: messagesQuery.data as ChatMessageType[] | undefined,
     messagesLoading: messagesQuery.isLoading,
     refetchMessages: messagesQuery.refetch,
   };
