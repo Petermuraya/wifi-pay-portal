@@ -46,6 +46,7 @@ export type Database = {
           mac_address: string
           phone_number: string | null
           updated_at: string
+          username: string | null
         }
         Insert: {
           created_at?: string
@@ -53,6 +54,7 @@ export type Database = {
           mac_address: string
           phone_number?: string | null
           updated_at?: string
+          username?: string | null
         }
         Update: {
           created_at?: string
@@ -60,6 +62,7 @@ export type Database = {
           mac_address?: string
           phone_number?: string | null
           updated_at?: string
+          username?: string | null
         }
         Relationships: []
       }

@@ -50,10 +50,12 @@ export function useConversationData({
         query = query.eq("username", username);
       }
       
-      const { data: existing } = await query
+      const { data: existing, error: selectError } = await query
         .order("created_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
+
+      if (selectError) throw selectError;
 
       if (existing) {
         setConversationId(existing.id);
