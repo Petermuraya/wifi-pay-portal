@@ -58,7 +58,10 @@ export function useChatActions({
       // Check if the response indicates success
       if (!response.data?.success) {
         console.error('Groq function returned error:', response.data);
-        throw new Error(response.data?.message || response.data?.error || 'Message failed to send');
+        
+        // Use the specific error message from the function if available
+        const errorMessage = response.data?.message || response.data?.error || 'Message failed to send';
+        throw new Error(errorMessage);
       }
 
       return response.data;
@@ -71,9 +74,25 @@ export function useChatActions({
     },
     onError: (error: any) => {
       console.error('Send message error:', error);
+      
+      // Provide more specific error messages based on the error type
+      let errorMessage = "Failed to send message. Please try again.";
+      
+      if (error.message.includes("authentication")) {
+        errorMessage = "Authentication error. Please refresh the page and try again.";
+      } else if (error.message.includes("busy") || error.message.includes("429")) {
+        errorMessage = "Service is busy. Please wait a moment and try again.";
+      } else if (error.message.includes("unavailable") || error.message.includes("500")) {
+        errorMessage = "Service temporarily unavailable. Please try again in a few minutes.";
+      } else if (error.message.includes("connection") || error.message.includes("network")) {
+        errorMessage = "Connection error. Please check your internet and try again.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       toast({
         title: "Message Failed",
-        description: error.message || "Failed to send message. Please try again.",
+        description: errorMessage,
         variant: "destructive",
       });
     },

@@ -7,8 +7,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY')
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -17,13 +15,15 @@ serve(async (req) => {
   try {
     console.log('Starting Groq chat function...')
     
+    const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY')
+    
     if (!GROQ_API_KEY) {
       console.error('GROQ_API_KEY not found in environment')
       return new Response(
         JSON.stringify({ 
           success: false, 
           error: "AI service configuration error",
-          message: "I'm having trouble connecting to the AI service. Please try again later."
+          message: "I'm having trouble connecting to the AI service. Please contact support."
         }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -102,13 +102,14 @@ Customer Information:
 - Username: ${username || 'Guest'}
 
 IMPORTANT INSTRUCTIONS:
-- When a customer wants to purchase a package, guide them through the process step by step
-- If they don't have a phone number yet, ask for their M-Pesa phone number
+- When a customer wants to purchase a package, ask for their M-Pesa phone number if not provided
+- Guide them through the payment process step by step
 - For payments, explain that they will receive an STK push notification on their phone
 - Always be helpful, friendly, and provide clear instructions
 - Keep responses concise but informative
 - If asked about reconnection codes, explain they get one after successful payment
 - For technical issues, provide step-by-step troubleshooting
+- If they want to make a payment, ask for their phone number and preferred package
 
 Be conversational and helpful. Always end responses with a question or call to action to keep the conversation flowing.`;
 
@@ -120,8 +121,9 @@ Be conversational and helpful. Always end responses with a question or call to a
     ];
 
     console.log('Sending to Groq API with', groqMessages.length, 'messages')
+    console.log('Using API key starting with:', GROQ_API_KEY.substring(0, 10) + '...')
 
-    // Call Groq API
+    // Call Groq API with proper error handling
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -143,11 +145,23 @@ Be conversational and helpful. Always end responses with a question or call to a
       const errorText = await groqResponse.text().catch(() => 'Unknown error');
       console.error('Groq API error:', groqResponse.status, errorText);
       
+      // Handle specific error cases
+      let errorMessage = "I'm having trouble processing your request right now. Please try again in a moment.";
+      
+      if (groqResponse.status === 401) {
+        console.error('Authentication failed - check API key');
+        errorMessage = "There's an authentication issue with the AI service. Please contact support.";
+      } else if (groqResponse.status === 429) {
+        errorMessage = "The AI service is currently busy. Please wait a moment and try again.";
+      } else if (groqResponse.status >= 500) {
+        errorMessage = "The AI service is temporarily unavailable. Please try again in a few minutes.";
+      }
+      
       return new Response(
         JSON.stringify({ 
           success: false, 
           error: `AI service error: ${groqResponse.status}`,
-          message: "I'm having trouble processing your request right now. Please try again in a moment."
+          message: errorMessage
         }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
