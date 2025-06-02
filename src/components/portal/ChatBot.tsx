@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageCircle, X, Minimize2, Maximize2 } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
-import { ChatHeader } from "./ChatHeader";
 import { ChatInput } from "./ChatInput";
 import { TypingIndicator } from "./TypingIndicator";
 import { ChatAuth } from "./ChatAuth";
@@ -23,14 +22,12 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
   const [isExpanded, setIsExpanded] = useState(false);
   const [isHidden, setIsHidden] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
   
   const {
     isAuthenticated,
     currentUser,
     login,
     logout,
-    endSession,
   } = useChatSession();
 
   const {
@@ -44,9 +41,7 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
     handleKeyPress,
     handleClearConversation,
     handleEndConversation,
-    refetchMessages,
     sendMessagePending,
-    clearLoading,
   } = useChatConversation({ 
     macAddress, 
     phoneNumber, 
@@ -85,9 +80,6 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
     setIsHidden(true);
     setIsMinimized(true);
   };
-
-  // Show welcome message if no messages
-  const showWelcome = !messagesLoading && (!messages || messages.length === 0) && isAuthenticated;
 
   // If chatbot is hidden, show a small restore button
   if (isHidden) {
@@ -214,25 +206,25 @@ export function ChatBot({ macAddress, phoneNumber, onSessionCreated }: ChatBotPr
         </CardHeader>
 
         <CardContent className="flex-1 flex flex-col p-0 bg-gradient-to-b from-slate-50 to-white">
-          <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
+          <ScrollArea className="flex-1 p-4">
             <div className="space-y-2">
-              {showWelcome && (
+              {/* Welcome message */}
+              {!messagesLoading && (!messages || messages.length === 0) && isAuthenticated && (
                 <div className="flex items-start space-x-3 mb-4 animate-fade-in">
                   <div className="flex-shrink-0 p-2 bg-gradient-to-br from-slate-600 to-slate-700 rounded-full shadow-sm">
                     <MessageCircle className="h-4 w-4 text-white" />
                   </div>
                   <div className="bg-white rounded-2xl rounded-tl-sm p-4 max-w-[300px] shadow-sm border border-slate-200">
                     <p className="text-sm text-slate-800 leading-relaxed">
-                      🌟 <strong>Welcome back, {currentUser}!</strong>
+                      🌟 <strong>Welcome, {currentUser}!</strong>
                       <br /><br />
-                      I'm here to help you with:
+                      I can help you with:
                       <br />📦 WiFi package purchases
+                      <br />💰 M-Pesa STK push payments
                       <br />🔑 Reconnection codes
-                      <br />💰 M-Pesa payments
-                      <br />❓ Service questions
-                      <br />💬 Technical support
+                      <br />❓ Technical support
                       <br /><br />
-                      <em>How can I assist you today?</em>
+                      <em>What would you like help with today?</em>
                     </p>
                   </div>
                 </div>

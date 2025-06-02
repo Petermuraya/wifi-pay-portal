@@ -30,7 +30,7 @@ export function useChatActions({
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  // Send message mutation with improved error handling
+  // Send message mutation with robust error handling
   const sendMessageMutation = useMutation({
     mutationFn: async (userMessage: string) => {
       if (!conversationId) throw new Error("No conversation found");
@@ -133,7 +133,7 @@ export function useChatActions({
         title: "Conversation Ended",
         description: "Thank you for using WiFi Assistant! 👋",
       });
-      return true; // Signal to close chat
+      return true;
     }
     return false;
   };

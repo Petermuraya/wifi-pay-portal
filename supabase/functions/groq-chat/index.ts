@@ -22,12 +22,12 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: "Groq API key not configured",
+          error: "AI service configuration error",
           message: "I'm having trouble connecting to the AI service. Please try again later."
         }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200 // Return 200 instead of error status
+          status: 200
         }
       )
     }
@@ -63,21 +63,17 @@ serve(async (req) => {
       .eq('is_active', true)
       .order('price');
 
-    if (packagesError) {
-      console.error('Error fetching packages:', packagesError)
-    }
+    console.log('Fetched packages:', packages?.length || 0, 'packages')
 
-    // Get conversation history
+    // Get conversation history (last 10 messages)
     const { data: messages, error: messagesError } = await supabase
       .from('chat_messages')
       .select('role, content')
       .eq('conversation_id', conversationId)
       .order('created_at')
-      .limit(10); // Limit to last 10 messages
+      .limit(10);
 
-    if (messagesError) {
-      console.error('Error fetching messages:', messagesError)
-    }
+    console.log('Fetched conversation history:', messages?.length || 0, 'messages')
 
     // Build conversation context
     const conversationHistory = messages?.map(msg => ({
@@ -85,26 +81,36 @@ serve(async (req) => {
       content: msg.content
     })) || [];
 
-    // Create system prompt with package information
+    // Create enhanced system prompt with package information and payment integration
     const packageInfo = packages?.map(pkg => 
-      `${pkg.name}: KSh ${pkg.price} for ${pkg.duration_minutes} minutes`
+      `${pkg.name}: KSh ${pkg.price} for ${pkg.duration_minutes} minutes (ID: ${pkg.id})`
     ).join('\n') || 'No packages available';
 
     const systemPrompt = `You are a helpful WiFi customer service assistant for Premium WiFi Services. You help customers with:
 
-1. **WiFi Package Purchases & M-Pesa Payments**
+1. **WiFi Package Selection & M-Pesa Payments**
 2. **Reconnection using existing codes**
-3. **Technical support and questions**
+3. **Technical support and troubleshooting**
+4. **General inquiries about our services**
 
 Available WiFi Packages:
 ${packageInfo}
 
-Customer's MAC Address: ${macAddress}
-${phoneNumber ? `Customer's Phone: ${phoneNumber}` : 'No phone number provided yet'}
-${username ? `Customer Name: ${username}` : ''}
+Customer Information:
+- MAC Address: ${macAddress}
+- Phone Number: ${phoneNumber || 'Not provided yet'}
+- Username: ${username || 'Guest'}
 
-Be conversational, helpful, and friendly. Provide clear guidance for WiFi access, payments, and technical support.
-Keep responses concise and actionable.`;
+IMPORTANT INSTRUCTIONS:
+- When a customer wants to purchase a package, guide them through the process step by step
+- If they don't have a phone number yet, ask for their M-Pesa phone number
+- For payments, explain that they will receive an STK push notification on their phone
+- Always be helpful, friendly, and provide clear instructions
+- Keep responses concise but informative
+- If asked about reconnection codes, explain they get one after successful payment
+- For technical issues, provide step-by-step troubleshooting
+
+Be conversational and helpful. Always end responses with a question or call to action to keep the conversation flowing.`;
 
     // Prepare messages for Groq
     const groqMessages = [
@@ -113,9 +119,9 @@ Keep responses concise and actionable.`;
       { role: "user", content: message }
     ];
 
-    console.log('Sending to Groq API...')
+    console.log('Sending to Groq API with', groqMessages.length, 'messages')
 
-    // Call Groq API with better error handling
+    // Call Groq API
     const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -126,7 +132,7 @@ Keep responses concise and actionable.`;
         model: 'llama-3.1-8b-instant',
         messages: groqMessages,
         temperature: 0.7,
-        max_tokens: 500,
+        max_tokens: 800,
         stream: false
       }),
     });
@@ -140,12 +146,12 @@ Keep responses concise and actionable.`;
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: `Groq API error: ${groqResponse.status}`,
+          error: `AI service error: ${groqResponse.status}`,
           message: "I'm having trouble processing your request right now. Please try again in a moment."
         }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200 // Always return 200 to avoid frontend errors
+          status: 200
         }
       )
     }
@@ -168,7 +174,7 @@ Keep responses concise and actionable.`;
     }
 
     const assistantMessage = groqData.choices[0].message.content;
-    console.log('Generated assistant message:', assistantMessage?.substring(0, 100) + '...')
+    console.log('Generated assistant message length:', assistantMessage?.length || 0)
 
     // Store user message
     const { error: userMessageError } = await supabase
@@ -213,11 +219,11 @@ Keep responses concise and actionable.`;
       JSON.stringify({ 
         success: false, 
         error: error.message || 'Unknown error',
-        message: "I'm sorry, I'm having trouble right now. Please try again or contact support."
+        message: "I'm sorry, I'm having trouble right now. Please try again or contact support if the issue persists."
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 // Always return 200 to prevent frontend errors
+        status: 200
       }
     )
   }
