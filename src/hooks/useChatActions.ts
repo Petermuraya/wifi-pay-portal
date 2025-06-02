@@ -1,3 +1,4 @@
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -35,8 +36,7 @@ export function useChatActions({
       if (!conversationId) throw new Error("No conversation found");
       if (!isOnline) throw new Error("You're offline. Please check your connection.");
 
-      // Store conversation context for AI memory
-      const conversationHistory = messages?.slice(-10) || []; // Last 10 messages for context
+      console.log('Sending message to Groq function...', { userMessage, conversationId, macAddress });
 
       const response = await supabase.functions.invoke('groq-chat', {
         body: {
@@ -45,25 +45,26 @@ export function useChatActions({
           macAddress,
           phoneNumber,
           username,
-          conversationHistory: conversationHistory.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          }))
         }
       });
+
+      console.log('Groq function response:', response);
 
       if (response.error) {
         console.error('Groq function error:', response.error);
         throw new Error(response.error.message || 'Failed to send message');
       }
       
+      // Check if the response indicates success
       if (!response.data?.success) {
-        throw new Error(response.data?.error || 'Message failed to send');
+        console.error('Groq function returned error:', response.data);
+        throw new Error(response.data?.message || response.data?.error || 'Message failed to send');
       }
 
       return response.data;
     },
     onSuccess: () => {
+      console.log('Message sent successfully');
       queryClient.invalidateQueries({ queryKey: ["chat-messages", conversationId] });
       setMessage("");
       setTimeout(() => inputRef.current?.focus(), 100);
