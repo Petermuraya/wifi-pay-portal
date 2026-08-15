@@ -18,6 +18,7 @@ interface PaymentStatusProps {
 
 export function PaymentStatus({ payment, macAddress, originalUrl, onBack, onSessionActivated }: PaymentStatusProps) {
   const [checks, setChecks] = useState(0);
+  const [retryingNetwork, setRetryingNetwork] = useState(false);
   const activatedRef = useRef(false);
   const { toast } = useToast();
 
@@ -64,6 +65,26 @@ export function PaymentStatus({ payment, macAddress, originalUrl, onBack, onSess
     toast({ title: "Reconnection code copied" });
   };
 
+  const retryNetwork = async () => {
+    if (!session?.id) return;
+    setRetryingNetwork(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("session-manager", {
+        body: { action: "retry-network", sessionId: session.id, macAddress },
+      });
+      if (error || !data?.success) throw new Error(data?.message || "Could not retry WiFi activation");
+      toast({
+        title: data.networkProvisioned ? "WiFi activated" : "Activation sent",
+        description: data.networkProvisioned ? "The hotspot has authorized this device." : data.networkMessage || "The router is still being contacted.",
+      });
+      await refetch();
+    } catch (error) {
+      toast({ title: "Activation retry failed", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setRetryingNetwork(false);
+    }
+  };
+
   const status = currentPayment?.status || "pending";
   const paymentSuccessful = status === "completed";
   const connected = paymentSuccessful && session?.network_status === "active";
@@ -98,7 +119,7 @@ export function PaymentStatus({ payment, macAddress, originalUrl, onBack, onSess
             : failed
               ? "The request was cancelled, failed or expired. You can safely try again."
               : networkFailed
-                ? "Your M-Pesa payment is safe, but the hotspot controller has not activated this device yet. Keep your reconnection code and contact the hotspot operator."
+                ? "Your M-Pesa payment is safe, but the hotspot controller has not activated this device yet. Retry activation or keep your reconnection code and contact the hotspot operator."
                 : paymentSuccessful
                   ? "Safaricom confirmed your payment. We are waiting for the hotspot controller to authorize this device."
                   : "Enter your M-Pesa PIN on your phone. This page checks Safaricom confirmation automatically."}
@@ -123,9 +144,16 @@ export function PaymentStatus({ payment, macAddress, originalUrl, onBack, onSess
         )}
 
         {(status === "pending" || (paymentSuccessful && !connected)) && (
-          <Button variant="outline" className="mt-5 w-full rounded-xl" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} /> Check status now
-          </Button>
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" className="w-full rounded-xl" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} /> Check status
+            </Button>
+            {paymentSuccessful && session?.id && (
+              <Button className="w-full rounded-xl" onClick={retryNetwork} disabled={retryingNetwork}>
+                <Router className={`mr-2 h-4 w-4 ${retryingNetwork ? "animate-pulse" : ""}`} /> Retry activation
+              </Button>
+            )}
+          </div>
         )}
 
         {connected && (
