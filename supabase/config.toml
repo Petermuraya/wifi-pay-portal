@@ -1,4 +1,3 @@
-
 project_id = "zecnturxqoisahnvstuj"
 
 [api]
@@ -48,8 +47,8 @@ image_transformation = {"enabled": true}
 [auth]
 enabled = true
 port = 54327
-site_url = "http://127.0.0.1:3000"
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+site_url = "http://127.0.0.1:5173"
+additional_redirect_urls = ["http://127.0.0.1:5173"]
 jwt_expiry = 3600
 enable_signup = true
 enable_email_confirmations = false
@@ -67,9 +66,23 @@ enable_signup = false
 enable_confirmations = false
 template = "Your code is {{ .Code }}"
 
+# Browser-initiated functions require a valid Supabase JWT (the anon client sends one).
 [functions.mpesa-stk-push]
-verify_jwt = false
+verify_jwt = true
 
+[functions.voucher-generator]
+verify_jwt = true
+
+[functions.session-manager]
+verify_jwt = true
+
+[functions.radius-auth]
+verify_jwt = true
+
+[functions.admin-api]
+verify_jwt = true
+
+# Safaricom cannot send a Supabase JWT. This endpoint is protected by MPESA_CALLBACK_SECRET in its callback URL.
 [functions.mpesa-callback]
 verify_jwt = false
 
