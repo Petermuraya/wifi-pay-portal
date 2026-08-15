@@ -19,7 +19,8 @@ serve(async (req) => {
       { auth: { persistSession: false } },
     );
 
-    const { action, sessionId, macAddress } = await req.json();
+    const body = await req.json();
+    const { action, sessionId, macAddress } = body;
 
     if (action === "activate") {
       if (!sessionId || !macAddress) return json({ success: false, message: "Missing session or device" }, 400);
@@ -43,6 +44,48 @@ serve(async (req) => {
         networkProvisioned: !networkError && network?.networkProvisioned === true,
         networkMessage: networkError?.message || network?.controller?.message || null,
       });
+    }
+
+    if (action === "reconnect") {
+      const code = String(body.reconnectionCode || "").trim();
+      if (!/^\d{6}$/.test(code) || !macAddress) return json({ success: false, message: "Invalid reconnection request" }, 400);
+
+      const { data: payment, error: paymentError } = await supabase
+        .from("payments")
+        .select("*, user_sessions(*)")
+        .eq("reconnection_code", code)
+        .eq("reconnection_code_used", false)
+        .eq("status", "completed")
+        .single();
+
+      if (paymentError || !payment?.user_sessions) return json({ success: false, message: "Invalid or already used reconnection code" }, 404);
+      if (payment.user_sessions.mac_address !== macAddress) return json({ success: false, message: "This code belongs to another device" }, 403);
+      if (!payment.user_sessions.expires_at || new Date(payment.user_sessions.expires_at).getTime() <= Date.now()) {
+        return json({ success: false, message: "This WiFi session has expired" }, 410);
+      }
+
+      const { data: claimed, error: claimError } = await supabase
+        .from("payments")
+        .update({ reconnection_code_used: true, updated_at: new Date().toISOString() })
+        .eq("id", payment.id)
+        .eq("reconnection_code_used", false)
+        .select("id")
+        .single();
+      if (claimError || !claimed) return json({ success: false, message: "This code has already been used" }, 409);
+
+      const { data: session, error: sessionError } = await supabase
+        .from("user_sessions")
+        .update({ status: "active", updated_at: new Date().toISOString() })
+        .eq("id", payment.session_id)
+        .select()
+        .single();
+      if (sessionError || !session) throw sessionError || new Error("Session could not be restored");
+
+      const { data: network, error: networkError } = await supabase.functions.invoke("radius-auth", {
+        body: { action: "authorize", sessionId: session.id, macAddress },
+      });
+
+      return json({ success: true, session, networkProvisioned: !networkError && network?.networkProvisioned === true });
     }
 
     if (action === "deactivate") {
