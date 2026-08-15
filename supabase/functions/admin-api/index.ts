@@ -27,6 +27,12 @@ serve(async (req) => {
     const action = String(body.action || "");
     if (action === "verify") return json({ success: true, valid: true });
 
+    if (action === "list-packages") {
+      const { data: packages, error } = await supabase.from("access_packages").select("*").order("price", { ascending: true });
+      if (error) throw error;
+      return json({ success: true, packages: packages || [] });
+    }
+
     if (action === "list-sessions") {
       const { data: sessions, error } = await supabase
         .from("user_sessions")
