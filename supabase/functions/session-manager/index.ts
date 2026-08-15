@@ -83,6 +83,20 @@ serve(async (req) => {
       package_name: entitlement?.packageName || null,
     });
 
+    const authorizeNetwork = async (sessionId: string, deviceMac: string) => {
+      if (!internalSecret) return { networkProvisioned: false, networkMessage: "Network service is not configured" };
+      const { data: network, error: networkError } = await supabase.functions.invoke("radius-auth", {
+        body: { action: "authorize", sessionId, macAddress: deviceMac, internalSecret },
+      });
+      if (networkError) {
+        await supabase.from("user_sessions").update({ network_status: "failed", updated_at: new Date().toISOString() }).eq("id", sessionId);
+      }
+      return {
+        networkProvisioned: !networkError && network?.networkProvisioned === true,
+        networkMessage: networkError?.message || network?.message || network?.controller?.message || null,
+      };
+    };
+
     if (action === "payment-status") {
       const paymentId = String(body.paymentId || "");
       if (!paymentId || !macAddress) return json({ success: false, message: "Invalid payment status request" }, 400);
@@ -131,6 +145,22 @@ serve(async (req) => {
       return json({ success: true, session: null });
     }
 
+    if (action === "retry-network") {
+      const sessionId = String(body.sessionId || "");
+      if (!sessionId || !macAddress) return json({ success: false, message: "Missing session or device" }, 400);
+      const { data: session } = await supabase.from("user_sessions").select("*").eq("id", sessionId).eq("mac_address", macAddress).maybeSingle();
+      if (!session || session.status !== "active") return json({ success: false, message: "Active session not found" }, 404);
+      if (!session.expires_at || new Date(session.expires_at).getTime() <= Date.now()) return json({ success: false, message: "This WiFi session has expired" }, 410);
+
+      const entitlement = await entitlementFor(sessionId);
+      if (!entitlement.valid) return json({ success: false, message: "Session has no valid payment or voucher" }, 403);
+
+      await supabase.from("user_sessions").update({ network_status: "pending", updated_at: new Date().toISOString() }).eq("id", sessionId);
+      const networkResult = await authorizeNetwork(sessionId, macAddress);
+      const { data: refreshed } = await supabase.from("user_sessions").select("*").eq("id", sessionId).single();
+      return json({ success: true, session: publicSession(refreshed, entitlement), ...networkResult });
+    }
+
     if (action === "activate") {
       if (!internalSecret || body.internalSecret !== internalSecret) return json({ success: false, message: "Unauthorized internal action" }, 401);
       const sessionId = String(body.sessionId || "");
@@ -149,20 +179,9 @@ serve(async (req) => {
         .eq("id", sessionId);
       if (error) throw error;
 
-      const { data: network, error: networkError } = await supabase.functions.invoke("radius-auth", {
-        body: { action: "authorize", sessionId, macAddress, internalSecret },
-      });
-      if (networkError) {
-        await supabase.from("user_sessions").update({ network_status: "failed", updated_at: new Date().toISOString() }).eq("id", sessionId);
-      }
-
+      const networkResult = await authorizeNetwork(sessionId, macAddress);
       const { data: refreshed } = await supabase.from("user_sessions").select("*").eq("id", sessionId).single();
-      return json({
-        success: true,
-        session: publicSession(refreshed, entitlement),
-        networkProvisioned: !networkError && network?.networkProvisioned === true,
-        networkMessage: networkError?.message || network?.controller?.message || null,
-      });
+      return json({ success: true, session: publicSession(refreshed, entitlement), ...networkResult });
     }
 
     if (action === "reconnect") {
@@ -188,12 +207,8 @@ serve(async (req) => {
         .eq("id", session.id);
       if (sessionError) throw sessionError;
 
-      const { data: network, error: networkError } = await supabase.functions.invoke("radius-auth", {
-        body: { action: "authorize", sessionId: session.id, macAddress, internalSecret },
-      });
-      const networkProvisioned = !networkError && network?.networkProvisioned === true;
-
-      if (networkProvisioned) {
+      const networkResult = await authorizeNetwork(session.id, macAddress);
+      if (networkResult.networkProvisioned) {
         await supabase
           .from("payments")
           .update({ reconnection_code_used: true, updated_at: new Date().toISOString() })
@@ -203,7 +218,7 @@ serve(async (req) => {
 
       const entitlement = await entitlementFor(session.id);
       const { data: refreshed } = await supabase.from("user_sessions").select("*").eq("id", session.id).single();
-      return json({ success: true, session: publicSession(refreshed, entitlement), networkProvisioned });
+      return json({ success: true, session: publicSession(refreshed, entitlement), ...networkResult });
     }
 
     if (action === "deactivate") {
