@@ -1,108 +1,49 @@
-
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
+import { Activity, Gift, HelpCircle, KeyRound, Loader2, ShieldCheck, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { motion, AnimatePresence } from "framer-motion";
 import { PackageSelection } from "@/components/portal/PackageSelection";
 import { PaymentForm } from "@/components/portal/PaymentForm";
 import { PaymentStatus } from "@/components/portal/PaymentStatus";
 import { VoucherRedemption } from "@/components/portal/VoucherRedemption";
-import { SessionMonitor } from "@/components/portal/SessionMonitor";
-import { AdminPanel } from "@/components/portal/AdminPanel";
-import { RouterIntegration } from "@/components/portal/RouterIntegration";
-import { RedirectHandler } from "@/components/portal/RedirectHandler";
-import { SessionTimeoutManager } from "@/components/portal/SessionTimeoutManager";
 import { ReconnectionCode } from "@/components/portal/ReconnectionCode";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SessionMonitor } from "@/components/portal/SessionMonitor";
 import { Button } from "@/components/ui/button";
-import { 
-  Wifi, 
-  Shield, 
-  Clock, 
-  Gift, 
-  Activity, 
-  Router, 
-  Globe,
-  Loader2,
-  HelpCircle,
-  Settings,
-  User,
-  CreditCard
-} from "lucide-react";
-import { Toaster } from "@/components/ui/toaster";
-import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
+import { useToast } from "@/hooks/use-toast";
 import type { Database } from "@/integrations/supabase/types";
-import { ChatBot } from "@/components/portal/ChatBot";
 
 type AccessPackage = Database["public"]["Tables"]["access_packages"]["Row"];
 type Payment = Database["public"]["Tables"]["payments"]["Row"];
 
-const TAB_CONFIG = [
-  { id: "packages", icon: Wifi, label: "Packages" },
-  { id: "voucher", icon: Gift, label: "Voucher" },
-  { id: "reconnect", icon: Shield, label: "Reconnect" },
-  { id: "monitor", icon: Activity, label: "Session" },
-  { id: "redirect", icon: Globe, label: "Redirect" },
-  { id: "router", icon: Router, label: "Router" },
-  { id: "admin", icon: Settings, label: "Admin" }
-] as const;
+type TabId = "packages" | "voucher" | "reconnect" | "session";
 
-type TabId = typeof TAB_CONFIG[number]['id'];
+const tabs = [
+  { id: "packages" as const, label: "Buy WiFi", icon: Wifi },
+  { id: "voucher" as const, label: "Voucher", icon: Gift },
+  { id: "reconnect" as const, label: "Reconnect", icon: KeyRound },
+  { id: "session" as const, label: "My session", icon: Activity },
+];
+
+const normalizeMac = (value: string | null) => {
+  if (!value) return "";
+  const normalized = value.trim().replace(/-/g, ":").toUpperCase();
+  return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(normalized) ? normalized : "";
+};
 
 export default function Portal() {
   const [selectedPackage, setSelectedPackage] = useState<AccessPackage | null>(null);
   const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
   const [currentSession, setCurrentSession] = useState<any>(null);
-  const [userMacAddress, setUserMacAddress] = useState<string>("");
   const [activeTab, setActiveTab] = useState<TabId>("packages");
-  const [isLoadingMac, setIsLoadingMac] = useState(true);
   const { toast } = useToast();
 
-  // Enhanced MAC address detection with error handling
-  useEffect(() => {
-    const detectMacAddress = async () => {
-      try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const macParam = urlParams.get('mac');
-        const origParam = urlParams.get('orig') || urlParams.get('redirect') || urlParams.get('url');
-        
-        if (macParam) {
-          setUserMacAddress(macParam);
-        } else {
-          // In production, you might want to implement a proper MAC detection fallback
-          const mockMac = "00:1B:44:11:3A:B7";
-          setUserMacAddress(mockMac);
-          toast({
-            title: "Demo Mode",
-            description: "Using demo MAC address for testing purposes",
-            variant: "default",
-          });
-        }
+  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+  const macAddress = normalizeMac(params.get("mac") || params.get("client_mac"));
+  const originalUrl = params.get("link-orig") || params.get("orig") || params.get("dst") || params.get("url") || "";
 
-        if (origParam) {
-          setActiveTab("redirect");
-        }
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Could not detect your device information",
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoadingMac(false);
-      }
-    };
-
-    detectMacAddress();
-  }, [toast]);
-
-  // Enhanced data fetching with error handling
-  const { 
-    data: packages, 
-    isLoading: isLoadingPackages,
-    error: packagesError 
-  } = useQuery({
+  const { data: packages, isLoading, error } = useQuery({
     queryKey: ["access-packages"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -110,83 +51,59 @@ export default function Portal() {
         .select("*")
         .eq("is_active", true)
         .order("price");
-      
       if (error) throw error;
       return data;
     },
     retry: 2,
-    staleTime: 1000 * 60 * 5 // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 
   useEffect(() => {
-    if (packagesError) {
+    if (error) {
       toast({
-        title: "Connection Error",
-        description: "Failed to load packages. Please check your connection.",
+        title: "Could not load WiFi packages",
+        description: "Check your connection and try again.",
         variant: "destructive",
       });
     }
-  }, [packagesError, toast]);
-
-  const handlePackageSelect = (pkg: AccessPackage) => {
-    setSelectedPackage(pkg);
-    // Analytics event could be tracked here
-  };
-
-  const handlePaymentCreated = (payment: Payment) => {
-    setCurrentPayment(payment);
-    toast({
-      title: "Payment Initiated",
-      description: "Your payment request has been created successfully",
-    });
-  };
-
-  const handleBackToPackages = () => {
-    setSelectedPackage(null);
-    setCurrentPayment(null);
-  };
+  }, [error, toast]);
 
   const handleSessionCreated = (session: any) => {
     setCurrentSession(session);
-    setActiveTab("monitor");
-    sessionStorage.setItem('captive_portal_auth', 'success');
-    
-    toast({
-      title: "Session Started",
-      description: `You now have ${session.duration_minutes} minutes of access`,
-    });
+    sessionStorage.setItem("captive_portal_auth", "success");
+    if (originalUrl) {
+      window.setTimeout(() => window.location.assign(originalUrl), 1400);
+    } else {
+      setActiveTab("session");
+    }
   };
 
-  const handleSessionExpired = () => {
-    setCurrentSession(null);
-    setActiveTab("packages");
-    sessionStorage.removeItem('captive_portal_auth');
-    
-    toast({
-      title: "Session Ended",
-      description: "Your WiFi access has expired",
-    });
-  };
-
-  if (isLoadingPackages || isLoadingMac) {
+  if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-purple-50 flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-            className="mx-auto"
-          >
-            <Loader2 className="h-12 w-12 text-indigo-600" />
-          </motion.div>
-          <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-slate-800">
-              {isLoadingMac ? "Detecting your device" : "Loading WiFi packages"}
-            </h2>
-            <Progress value={isLoadingMac ? 30 : 70} className="w-48 mx-auto" />
-            <p className="text-slate-500 text-sm">
-              {isLoadingMac ? "Reading network information..." : "Fetching available options..."}
-            </p>
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center px-6">
+        <div className="w-full max-w-sm text-center text-white">
+          <Loader2 className="mx-auto h-10 w-10 animate-spin text-emerald-400" />
+          <h1 className="mt-5 text-xl font-semibold">Connecting you to WiFi</h1>
+          <p className="mt-2 text-sm text-slate-400">Loading available internet packages…</p>
+          <Progress value={72} className="mt-5" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!macAddress) {
+    return (
+      <div className="min-h-screen bg-slate-950 px-5 py-12 text-white">
+        <div className="mx-auto max-w-md rounded-3xl border border-white/10 bg-white/5 p-7 shadow-2xl backdrop-blur">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-400/15 text-amber-300">
+            <Wifi className="h-6 w-6" />
+          </div>
+          <h1 className="mt-6 text-2xl font-semibold">Open this page from the hotspot</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-300">
+            Your router did not provide a valid device MAC address. Connect to the WiFi network and let the hotspot redirect you to this portal.
+          </p>
+          <div className="mt-6 rounded-2xl bg-slate-900 p-4 text-xs text-slate-400">
+            Required captive-portal parameter: <span className="font-mono text-slate-200">?mac=AA:BB:CC:DD:EE:FF</span>
           </div>
         </div>
       </div>
@@ -194,180 +111,92 @@ export default function Portal() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-purple-50">
-      <Toaster />
-      
-      {/* Header with Stripe-inspired styling */}
-      <header className="bg-white/80 backdrop-blur-lg shadow-sm border-b border-slate-200/50">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl">
-              <Wifi className="h-6 w-6 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 bg-clip-text text-transparent">
-              Premium WiFi Portal
-            </h1>
-          </div>
-          
-          <div className="flex items-center space-x-4">
-            <Button variant="ghost" size="sm" className="text-slate-600 hover:text-indigo-600 hover:bg-indigo-50">
-              <HelpCircle className="h-4 w-4 mr-2" />
-              Help
-            </Button>
-            {currentSession && (
-              <div className="flex items-center space-x-2">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-sm font-medium text-slate-600">Connected</span>
-              </div>
-            )}
-          </div>
+    <div className="min-h-screen bg-[#f4f7f6] text-slate-950">
+      <header className="border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
+          <button className="flex items-center gap-3" onClick={() => { setActiveTab("packages"); setSelectedPackage(null); setCurrentPayment(null); }}>
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-sm">
+              <Wifi className="h-5 w-5" />
+            </span>
+            <span className="text-left">
+              <span className="block text-base font-bold leading-tight">SwiftSpot WiFi</span>
+              <span className="block text-xs text-slate-500">Fast. Simple. M-Pesa ready.</span>
+            </span>
+          </button>
+          <Button variant="ghost" size="sm" onClick={() => toast({ title: "Need help?", description: "Use your voucher/reconnection code or contact the hotspot operator." })}>
+            <HelpCircle className="mr-2 h-4 w-4" /> Help
+          </Button>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
-        {/* User status bar with Stripe-inspired design */}
-        <div className="bg-white/70 backdrop-blur-lg rounded-xl shadow-sm p-4 mb-6 flex justify-between items-center border border-slate-200/50">
-          <div className="flex items-center space-x-4">
-            <div className="p-2 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-xl">
-              <User className="h-5 w-5 text-indigo-600" />
-            </div>
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-9">
+        <section className="overflow-hidden rounded-3xl bg-slate-950 px-5 py-6 text-white shadow-xl sm:px-8 sm:py-8">
+          <div className="grid gap-6 md:grid-cols-[1.5fr_1fr] md:items-center">
             <div>
-              <p className="text-sm font-medium text-slate-500">Device ID</p>
-              <p className="font-mono text-sm text-slate-800">{userMacAddress}</p>
-            </div>
-          </div>
-          
-          {currentSession && (
-            <div className="flex items-center space-x-4">
-              <div className="text-right">
-                <p className="text-sm font-medium text-slate-500">Session Time</p>
-                <p className="text-sm font-medium text-slate-800">
-                  {currentSession.duration_minutes} minutes remaining
-                </p>
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-300">
+                <ShieldCheck className="h-3.5 w-3.5" /> Secure hotspot access
               </div>
-              <Clock className="h-5 w-5 text-slate-400" />
+              <h1 className="mt-4 max-w-xl text-3xl font-bold tracking-tight sm:text-4xl">Get online in under a minute.</h1>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">
+                Choose a package, pay securely with M-Pesa and your device is activated automatically.
+              </p>
             </div>
-          )}
-        </div>
-
-        {/* Navigation Tabs with Stripe-inspired design */}
-        <div className="max-w-6xl mx-auto mb-8">
-          <div className="flex flex-wrap gap-2 justify-center bg-white/50 backdrop-blur-lg rounded-2xl p-2 border border-slate-200/50">
-            {TAB_CONFIG.map((tab) => (
-              <Button
-                key={tab.id}
-                variant={activeTab === tab.id ? "default" : "ghost"}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center transition-all rounded-xl ${
-                  activeTab === tab.id 
-                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg' 
-                    : 'text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50'
-                }`}
-                size="sm"
-              >
-                <tab.icon className="h-4 w-4 mr-2" />
-                {tab.label}
-              </Button>
-            ))}
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">This device</p>
+              <p className="mt-2 font-mono text-sm font-semibold text-white">{macAddress}</p>
+              <div className="mt-3 flex items-center gap-2 text-xs text-emerald-300">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" /> Ready for activation
+              </div>
+            </div>
           </div>
-        </div>
+        </section>
 
-        {/* Main Content with smooth transitions */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-            className="max-w-4xl mx-auto"
-          >
-            <div className="grid gap-6">
-              {/* Session Timeout Manager */}
-              {currentSession && (
-                <SessionTimeoutManager 
-                  sessionId={currentSession.id}
-                  onSessionExpired={handleSessionExpired}
-                />
-              )}
+        <nav className="mt-6 grid grid-cols-4 gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => { setActiveTab(tab.id); setSelectedPackage(null); setCurrentPayment(null); }}
+                className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-2 text-xs font-medium transition sm:flex-row sm:gap-2 sm:text-sm ${active ? "bg-slate-950 text-white shadow" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
+              >
+                <Icon className="h-4 w-4" /> {tab.label}
+              </button>
+            );
+          })}
+        </nav>
 
-              {/* Content Switching */}
+        <div className="mt-6">
+          <AnimatePresence mode="wait">
+            <motion.div key={`${activeTab}-${Boolean(selectedPackage)}-${Boolean(currentPayment)}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
               {currentPayment ? (
-                <PaymentStatus 
+                <PaymentStatus
                   payment={currentPayment}
-                  onBack={handleBackToPackages}
-                />
-              ) : selectedPackage ? (
-                <PaymentForm
-                  package={selectedPackage}
-                  macAddress={userMacAddress}
-                  onPaymentCreated={handlePaymentCreated}
-                  onBack={handleBackToPackages}
-                />
-              ) : activeTab === "packages" ? (
-                <PackageSelection
-                  packages={packages || []}
-                  onSelectPackage={handlePackageSelect}
-                />
-              ) : activeTab === "voucher" ? (
-                <VoucherRedemption
-                  macAddress={userMacAddress}
-                  onSessionCreated={handleSessionCreated}
-                />
-              ) : activeTab === "reconnect" ? (
-                <ReconnectionCode
-                  macAddress={userMacAddress}
+                  macAddress={macAddress}
+                  originalUrl={originalUrl}
+                  onBack={() => { setCurrentPayment(null); setSelectedPackage(null); }}
                   onSessionActivated={handleSessionCreated}
                 />
-              ) : activeTab === "monitor" ? (
-                <SessionMonitor macAddress={userMacAddress} />
-              ) : activeTab === "redirect" ? (
-                <RedirectHandler userMacAddress={userMacAddress} />
-              ) : activeTab === "router" ? (
-                <RouterIntegration />
-              ) : activeTab === "admin" ? (
-                <AdminPanel />
-              ) : null}
-            </div>
-          </motion.div>
-        </AnimatePresence>
+              ) : selectedPackage ? (
+                <PaymentForm package={selectedPackage} macAddress={macAddress} onPaymentCreated={setCurrentPayment} onBack={() => setSelectedPackage(null)} />
+              ) : activeTab === "packages" ? (
+                <PackageSelection packages={packages || []} onSelectPackage={setSelectedPackage} />
+              ) : activeTab === "voucher" ? (
+                <VoucherRedemption macAddress={macAddress} onSessionCreated={handleSessionCreated} />
+              ) : activeTab === "reconnect" ? (
+                <ReconnectionCode macAddress={macAddress} onSessionActivated={handleSessionCreated} />
+              ) : (
+                <SessionMonitor macAddress={macAddress} />
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </main>
 
-      {/* Enhanced Footer with Stripe-inspired design */}
-      <footer className="bg-white/60 backdrop-blur-lg border-t border-slate-200/50 mt-12">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex flex-col md:flex-row justify-between items-center">
-            <div className="flex items-center space-x-4 mb-4 md:mb-0">
-              <div className="flex items-center space-x-2">
-                <Shield className="h-4 w-4 text-slate-400" />
-                <span className="text-sm text-slate-500">Secure Connection</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <CreditCard className="h-4 w-4 text-slate-400" />
-                <span className="text-sm text-slate-500">PCI Compliant</span>
-              </div>
-            </div>
-            
-            <div className="text-center md:text-right">
-              <p className="text-sm text-slate-500">
-                © {new Date().getFullYear()} Premium WiFi Services. All rights reserved.
-              </p>
-              <p className="text-sm text-slate-500 mt-1">
-                Need help? <a href="mailto:support@premiumwifi.com" className="text-indigo-600 hover:underline">Contact our support team</a>
-              </p>
-            </div>
-          </div>
-        </div>
+      <footer className="mx-auto max-w-5xl px-4 pb-8 text-center text-xs text-slate-500 sm:px-6">
+        Secure M-Pesa payments • Access is tied to this device • © {new Date().getFullYear()} SwiftSpot WiFi
       </footer>
-
-      {/* Add ChatBot */}
-      {!isLoadingMac && userMacAddress && (
-        <ChatBot
-          macAddress={userMacAddress}
-          phoneNumber={currentSession?.phone_number}
-          onSessionCreated={handleSessionCreated}
-        />
-      )}
     </div>
   );
 }
