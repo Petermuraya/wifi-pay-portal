@@ -24,11 +24,16 @@ export function ReconnectionCode({ macAddress, onSessionActivated }: Reconnectio
       });
       if (error) throw new Error("Could not verify the reconnection code.");
       if (!data?.success || !data?.session) throw new Error(data?.message || "This code is invalid or has already been used.");
-      return data.session;
+      return data;
     },
-    onSuccess: (session) => {
-      toast({ title: "Reconnected", description: "Your WiFi session has been restored." });
-      onSessionActivated?.(session);
+    onSuccess: (data) => {
+      toast({
+        title: data.networkProvisioned ? "Reconnected" : "Session restored",
+        description: data.networkProvisioned
+          ? "The hotspot has restored internet access on this device."
+          : data.networkMessage || "Your paid session is valid, but the router is still confirming access.",
+      });
+      onSessionActivated?.(data.session);
     },
     onError: (error: Error) => toast({ title: "Could not reconnect", description: error.message, variant: "destructive" }),
   });
@@ -59,7 +64,7 @@ export function ReconnectionCode({ macAddress, onSessionActivated }: Reconnectio
       </form>
 
       <div className="mt-5 flex items-start gap-3 rounded-2xl bg-slate-50 p-4 text-xs leading-5 text-slate-500">
-        <Wifi className="mt-0.5 h-4 w-4 shrink-0" /> Codes are tied to the device that made the original payment and can be used once.
+        <Wifi className="mt-0.5 h-4 w-4 shrink-0" /> The code is tied to the device that made the original payment. It is consumed only after the hotspot successfully re-authorizes the session.
       </div>
     </div>
   );
