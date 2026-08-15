@@ -1,12 +1,10 @@
-
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { CheckCircle2, KeyRound, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Wifi, Key, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface ReconnectionCodeProps {
@@ -15,145 +13,59 @@ interface ReconnectionCodeProps {
 }
 
 export function ReconnectionCode({ macAddress, onSessionActivated }: ReconnectionCodeProps) {
-  const [reconnectionCode, setReconnectionCode] = useState("");
+  const [code, setCode] = useState("");
   const { toast } = useToast();
 
-  const reconnectMutation = useMutation({
-    mutationFn: async ({ code }: { code: string }) => {
-      // Find payment with the reconnection code
-      const { data: payment, error: paymentError } = await supabase
-        .from("payments")
-        .select("*, user_sessions(*)")
-        .eq("reconnection_code", code)
-        .eq("reconnection_code_used", false)
-        .eq("status", "completed")
-        .single();
-
-      if (paymentError || !payment) {
-        throw new Error("Invalid or already used reconnection code");
-      }
-
-      // Check if the MAC address matches the session
-      if (payment.user_sessions?.mac_address !== macAddress) {
-        throw new Error("This reconnection code is not valid for your device");
-      }
-
-      // Mark the reconnection code as used
-      const { error: updateError } = await supabase
-        .from("payments")
-        .update({ reconnection_code_used: true })
-        .eq("id", payment.id);
-
-      if (updateError) throw updateError;
-
-      // Activate the session
-      const { data: session, error: sessionError } = await supabase
-        .from("user_sessions")
-        .update({ 
-          status: "active",
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", payment.session_id)
-        .select()
-        .single();
-
-      if (sessionError) throw sessionError;
-
-      // Call RADIUS auth
-      const { error: radiusError } = await supabase.functions.invoke('radius-auth', {
-        body: { 
-          action: 'authorize', 
-          sessionId: session.id, 
-          macAddress: macAddress 
-        }
+  const reconnect = useMutation({
+    mutationFn: async () => {
+      if (!/^\d{6}$/.test(code)) throw new Error("Enter the 6-digit code from your successful payment.");
+      const { data, error } = await supabase.functions.invoke("session-manager", {
+        body: { action: "reconnect", reconnectionCode: code, macAddress },
       });
-
-      if (radiusError) {
-        console.error('RADIUS auth error:', radiusError);
-      }
-
-      return session;
+      if (error) throw new Error("Could not verify the reconnection code.");
+      if (!data?.success || !data?.session) throw new Error(data?.message || "This code is invalid or has already been used.");
+      return data;
     },
-    onSuccess: (session) => {
+    onSuccess: (data) => {
       toast({
-        title: "Reconnection Successful!",
-        description: "Your internet access has been restored.",
+        title: data.networkProvisioned ? "Reconnected" : "Session restored",
+        description: data.networkProvisioned
+          ? "The hotspot has restored internet access on this device."
+          : data.networkMessage || "Your paid session is valid, but the router is still confirming access.",
       });
-      onSessionActivated?.(session);
+      onSessionActivated?.(data.session);
     },
-    onError: (error) => {
-      toast({
-        title: "Reconnection Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
+    onError: (error: Error) => toast({ title: "Could not reconnect", description: error.message, variant: "destructive" }),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!reconnectionCode || reconnectionCode.length !== 6) {
-      toast({
-        title: "Invalid Code",
-        description: "Please enter a valid 6-digit reconnection code.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    reconnectMutation.mutate({ code: reconnectionCode });
-  };
-
   return (
-    <Card className="max-w-md mx-auto">
-      <CardHeader>
-        <CardTitle className="flex items-center">
-          <Key className="h-5 w-5 mr-2 text-blue-500" />
-          Reconnection Code
-        </CardTitle>
-      </CardHeader>
-      
-      <CardContent className="space-y-4">
-        <div className="text-center">
-          <Wifi className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">
-            Enter your unique reconnection code to restore internet access
-          </p>
+    <div className="mx-auto max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white">
+        <KeyRound className="h-5 w-5" />
+      </div>
+      <h2 className="mt-5 text-2xl font-bold tracking-tight">Reconnect this device</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-500">If you already paid but were disconnected, enter the 6-digit code shown after payment.</p>
+
+      <form className="mt-6 space-y-4" onSubmit={(event) => { event.preventDefault(); reconnect.mutate(); }}>
+        <div>
+          <Label htmlFor="reconnection-code" className="font-semibold">Reconnection code</Label>
+          <Input
+            id="reconnection-code"
+            inputMode="numeric"
+            placeholder="000000"
+            value={code}
+            onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            className="mt-2 h-14 rounded-xl text-center font-mono text-2xl font-bold tracking-[0.3em]"
+          />
         </div>
+        <Button className="h-12 w-full rounded-xl bg-slate-950 hover:bg-slate-800" disabled={reconnect.isPending || code.length !== 6}>
+          {reconnect.isPending ? "Checking code…" : <><CheckCircle2 className="mr-2 h-4 w-4" /> Reconnect to WiFi</>}
+        </Button>
+      </form>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="reconnection-code">6-Digit Reconnection Code</Label>
-            <Input
-              id="reconnection-code"
-              type="text"
-              placeholder="000000"
-              value={reconnectionCode}
-              onChange={(e) => setReconnectionCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              className="text-center text-lg font-mono"
-              maxLength={6}
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              This code was provided after your M-Pesa payment
-            </p>
-          </div>
-
-          <Button 
-            type="submit" 
-            className="w-full" 
-            disabled={reconnectMutation.isPending || reconnectionCode.length !== 6}
-          >
-            <CheckCircle className="h-4 w-4 mr-2" />
-            {reconnectMutation.isPending ? "Reconnecting..." : "Reconnect to Internet"}
-          </Button>
-        </form>
-
-        <div className="text-center text-xs text-gray-500 bg-yellow-50 rounded-lg p-3">
-          <p><strong>Note:</strong> Each reconnection code can only be used once.</p>
-          <p>If you don't have a code, please make a new payment.</p>
-        </div>
-      </CardContent>
-    </Card>
+      <div className="mt-5 flex items-start gap-3 rounded-2xl bg-slate-50 p-4 text-xs leading-5 text-slate-500">
+        <Wifi className="mt-0.5 h-4 w-4 shrink-0" /> The code is tied to the device that made the original payment. It is consumed only after the hotspot successfully re-authorizes the session.
+      </div>
+    </div>
   );
 }

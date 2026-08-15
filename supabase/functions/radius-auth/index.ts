@@ -1,122 +1,136 @@
-
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+const normalizeMac = (value: unknown) => {
+  const mac = String(value || "").trim().replace(/-/g, ":").toUpperCase();
+  return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac) ? mac : "";
+};
+
+async function notifyController(action: "authorize" | "disconnect", payload: Record<string, unknown>) {
+  const controllerUrl = Deno.env.get("NETWORK_CONTROLLER_URL");
+  const controllerToken = Deno.env.get("NETWORK_CONTROLLER_TOKEN");
+  if (!controllerUrl) {
+    return { success: false, configured: false, message: "NETWORK_CONTROLLER_URL is not configured" };
+  }
+
+  const controller = new URL(controllerUrl);
+  if (!["http:", "https:"].includes(controller.protocol)) throw new Error("Invalid network controller URL");
+
+  const response = await fetch(controller.toString(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(controllerToken ? { Authorization: `Bearer ${controllerToken}` } : {}),
+    },
+    body: JSON.stringify({ action, ...payload }),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.message || `Network controller returned ${response.status}`);
+  return { success: true, configured: true, response: body };
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return json({ success: false, message: "Method not allowed" }, 405);
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  const expectedSecret = Deno.env.get("INTERNAL_FUNCTION_SECRET") || "";
+  if (!supabaseUrl || !serviceRoleKey || !expectedSecret) return json({ success: false, message: "Network service is not configured" }, 503);
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    )
+    const body = await req.json();
+    const action = String(body.action || "");
+    const sessionId = String(body.sessionId || "");
+    const macAddress = normalizeMac(body.macAddress);
 
-    const { action, sessionId, macAddress } = await req.json()
-    console.log('RADIUS action:', action, 'for session:', sessionId)
+    if (body.internalSecret !== expectedSecret) return json({ success: false, message: "Unauthorized internal request" }, 401);
+    if (!sessionId || !macAddress || !["authorize", "disconnect"].includes(action)) {
+      return json({ success: false, message: "Invalid authorization request" }, 400);
+    }
 
-    if (action === 'authorize') {
-      // Check if user has valid session
-      const { data: session, error } = await supabase
-        .from('user_sessions')
-        .select('*, payments!inner(*)')
-        .eq('id', sessionId)
-        .eq('status', 'active')
-        .eq('payments.status', 'completed')
-        .gt('expires_at', new Date().toISOString())
-        .single()
+    const { data: session, error: sessionError } = await supabase
+      .from("user_sessions")
+      .select("*")
+      .eq("id", sessionId)
+      .eq("mac_address", macAddress)
+      .maybeSingle();
+    if (sessionError || !session) return json({ success: false, networkProvisioned: false, message: "Session not found" }, 404);
 
-      if (error || !session) {
-        console.log('Authorization denied for session:', sessionId, error)
-        return new Response(
-          JSON.stringify({ authorized: false, reason: 'Invalid or expired session' }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
+    if (action === "authorize") {
+      if (session.status !== "active" || !session.expires_at || new Date(session.expires_at).getTime() <= Date.now()) {
+        return json({ authorized: false, networkProvisioned: false, reason: "Invalid or expired session" }, 403);
       }
 
-      // Send authorization to RADIUS server
-      const radiusResponse = await sendRadiusAuth(macAddress, session)
-      
-      return new Response(
-        JSON.stringify({ 
-          authorized: true, 
-          session: session,
-          radiusResponse: radiusResponse 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+      const { data: payment } = await supabase
+        .from("payments")
+        .select("id")
+        .eq("session_id", sessionId)
+        .eq("status", "completed")
+        .limit(1)
+        .maybeSingle();
 
-    if (action === 'disconnect') {
-      // Disconnect user from RADIUS
-      await sendRadiusDisconnect(macAddress)
-      
-      // Update session status
-      await supabase
-        .from('user_sessions')
-        .update({ status: 'terminated' })
-        .eq('id', sessionId)
-
-      return new Response(
-        JSON.stringify({ success: true, message: 'User disconnected' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    throw new Error('Invalid action')
-
-  } catch (error) {
-    console.error('RADIUS auth error:', error)
-    return new Response(
-      JSON.stringify({ success: false, error: error.message }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500 
+      let voucher: { id: string } | null = null;
+      if (!payment) {
+        const { data } = await supabase
+          .from("vouchers")
+          .select("id")
+          .eq("session_id", sessionId)
+          .eq("status", "used")
+          .limit(1)
+          .maybeSingle();
+        voucher = data;
       }
-    )
-  }
-})
 
-async function sendRadiusAuth(macAddress: string, session: any) {
-  const radiusServer = Deno.env.get('RADIUS_SERVER_URL') || 'http://localhost:1812'
-  const radiusSecret = Deno.env.get('RADIUS_SHARED_SECRET') || 'testing123'
-  
-  try {
-    // Send RADIUS Access-Accept
-    const radiusPayload = {
-      username: macAddress,
-      sessionId: session.id,
-      sessionTimeout: Math.floor((new Date(session.expires_at).getTime() - Date.now()) / 1000),
-      action: 'accept'
+      if (!payment && !voucher) {
+        await supabase.from("user_sessions").update({ network_status: "failed", updated_at: new Date().toISOString() }).eq("id", sessionId);
+        return json({ authorized: false, networkProvisioned: false, reason: "Session has no completed payment or redeemed voucher" }, 403);
+      }
+
+      const secondsRemaining = Math.max(0, Math.floor((new Date(session.expires_at).getTime() - Date.now()) / 1000));
+      try {
+        const controller = await notifyController("authorize", {
+          macAddress,
+          sessionId,
+          sessionTimeout: secondsRemaining,
+          accessMethod: payment ? "mpesa" : "voucher",
+        });
+        await supabase
+          .from("user_sessions")
+          .update({ network_status: controller.success ? "active" : "failed", updated_at: new Date().toISOString() })
+          .eq("id", sessionId);
+        return json({ authorized: true, networkProvisioned: controller.success, controller });
+      } catch (error) {
+        await supabase.from("user_sessions").update({ network_status: "failed", updated_at: new Date().toISOString() }).eq("id", sessionId);
+        return json({ authorized: true, networkProvisioned: false, message: error instanceof Error ? error.message : "Network controller failed" }, 502);
+      }
     }
 
-    console.log('Sending RADIUS auth for:', macAddress)
-    
-    // In a real implementation, you'd use a proper RADIUS client library
-    // For now, we'll simulate the RADIUS communication
-    return { success: true, message: 'RADIUS auth sent' }
-    
-  } catch (error) {
-    console.error('RADIUS auth failed:', error)
-    throw error
-  }
-}
+    let controller: any = { success: false, configured: false, message: "Network controller not configured" };
+    try {
+      controller = await notifyController("disconnect", { macAddress, sessionId });
+    } catch (error) {
+      controller = { success: false, configured: true, message: error instanceof Error ? error.message : "Network controller failed" };
+    }
 
-async function sendRadiusDisconnect(macAddress: string) {
-  try {
-    console.log('Sending RADIUS disconnect for:', macAddress)
-    
-    // In a real implementation, send RADIUS Disconnect-Request
-    return { success: true, message: 'RADIUS disconnect sent' }
-    
+    await supabase
+      .from("user_sessions")
+      .update({ status: "terminated", network_status: "disconnected", updated_at: new Date().toISOString() })
+      .eq("id", sessionId);
+    return json({ success: true, networkProvisioned: controller.success, controller });
   } catch (error) {
-    console.error('RADIUS disconnect failed:', error)
-    throw error
+    console.error("Network authorization error", error);
+    return json({ success: false, networkProvisioned: false, message: error instanceof Error ? error.message : "Network authorization failed" }, 500);
   }
-}
+});

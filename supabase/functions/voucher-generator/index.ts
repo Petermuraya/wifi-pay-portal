@@ -1,155 +1,140 @@
-
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+const randomPart = (length: number) => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+};
+
+const normalizeMac = (value: unknown) => {
+  const mac = String(value || "").trim().replace(/-/g, ":").toUpperCase();
+  return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac) ? mac : "";
+};
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    )
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const internalSecret = Deno.env.get("INTERNAL_FUNCTION_SECRET") || "";
+    if (!supabaseUrl || !serviceRoleKey || !internalSecret) return json({ success: false, error: "Voucher service is not configured" }, 503);
 
-    const { action, packageId, quantity = 1, adminKey } = await req.json()
+    const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const body = await req.json();
+    const action = String(body.action || "");
 
-    // Verify admin access
-    if (adminKey !== Deno.env.get('ADMIN_SECRET_KEY')) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Unauthorized' }),
-        { 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 401 
-        }
-      )
-    }
+    if (action === "generate") {
+      if (!Deno.env.get("ADMIN_SECRET_KEY") || body.adminKey !== Deno.env.get("ADMIN_SECRET_KEY")) {
+        return json({ success: false, error: "Unauthorized" }, 401);
+      }
 
-    if (action === 'generate') {
-      const vouchers = []
-      
+      const quantity = Math.min(Math.max(Number(body.quantity || 1), 1), 100);
+      const prefix = String(body.prefix || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
+      const packageId = String(body.packageId || "");
+      if (!packageId) return json({ success: false, error: "Package is required" }, 400);
+
+      const { data: pkg } = await supabase
+        .from("access_packages")
+        .select("id,name,duration_minutes,price,is_active")
+        .eq("id", packageId)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (!pkg) return json({ success: false, error: "Package is not available" }, 404);
+
+      const vouchers = [];
       for (let i = 0; i < quantity; i++) {
-        const voucherCode = generateVoucherCode()
-        
-        const { data: voucher, error } = await supabase
-          .from('vouchers')
-          .insert({
-            code: voucherCode,
-            package_id: packageId,
-            status: 'unused',
-            created_at: new Date().toISOString()
-          })
-          .select()
-          .single()
-
-        if (error) throw error
-        vouchers.push(voucher)
+        let voucher: any = null;
+        for (let attempt = 0; attempt < 8 && !voucher; attempt++) {
+          const code = `${prefix}${randomPart(8 - prefix.length)}`;
+          const { data, error } = await supabase
+            .from("vouchers")
+            .insert({ code, package_id: packageId, status: "unused", created_at: new Date().toISOString() })
+            .select()
+            .single();
+          if (!error) voucher = data;
+        }
+        if (!voucher) throw new Error("Could not generate a unique voucher code");
+        vouchers.push({ ...voucher, package_name: pkg.name, duration_minutes: pkg.duration_minutes, price: pkg.price });
       }
-
-      console.log('Generated vouchers:', vouchers.length)
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          vouchers: vouchers,
-          message: `Generated ${vouchers.length} voucher(s)` 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return json({ success: true, vouchers });
     }
 
-    if (action === 'redeem') {
-      const { voucherCode, macAddress } = await req.json()
-      
-      // Find unused voucher
-      const { data: voucher, error: voucherError } = await supabase
-        .from('vouchers')
-        .select('*, access_packages(*)')
-        .eq('code', voucherCode)
-        .eq('status', 'unused')
-        .single()
-
-      if (voucherError || !voucher) {
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: 'Invalid or already used voucher code' 
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
+    if (action === "redeem") {
+      const voucherCode = String(body.voucherCode || "").trim().toUpperCase();
+      const macAddress = normalizeMac(body.macAddress);
+      if (!/^[A-Z0-9]{8}$/.test(voucherCode) || !macAddress) {
+        return json({ success: false, error: "Invalid voucher or device" }, 400);
       }
 
-      // Create user session
+      const { data: voucher, error: voucherError } = await supabase
+        .from("vouchers")
+        .select("*, access_packages(*)")
+        .eq("code", voucherCode)
+        .eq("status", "unused")
+        .maybeSingle();
+      if (voucherError || !voucher?.access_packages || voucher.access_packages.is_active === false) {
+        return json({ success: false, error: "Invalid, inactive or already used voucher code" }, 404);
+      }
+
+      const durationMinutes = Number(voucher.access_packages.duration_minutes);
+      if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) return json({ success: false, error: "Voucher package is invalid" }, 400);
+
       const { data: session, error: sessionError } = await supabase
-        .from('user_sessions')
+        .from("user_sessions")
         .insert({
           mac_address: macAddress,
-          phone_number: 'voucher-user',
-          expires_at: new Date(Date.now() + voucher.access_packages.duration_minutes * 60 * 1000).toISOString(),
-          status: 'active'
+          phone_number: "VOUCHER",
+          expires_at: new Date(Date.now() + durationMinutes * 60_000).toISOString(),
+          status: "pending",
+          network_status: "pending",
         })
         .select()
-        .single()
+        .single();
+      if (sessionError || !session) throw sessionError || new Error("Could not create voucher session");
 
-      if (sessionError) throw sessionError
+      const { data: claimedVoucher, error: claimError } = await supabase
+        .from("vouchers")
+        .update({ status: "used", used_at: new Date().toISOString(), session_id: session.id })
+        .eq("id", voucher.id)
+        .eq("status", "unused")
+        .select()
+        .maybeSingle();
 
-      // Mark voucher as used
-      await supabase
-        .from('vouchers')
-        .update({ 
-          status: 'used',
-          used_at: new Date().toISOString(),
-          session_id: session.id
-        })
-        .eq('id', voucher.id)
+      if (claimError || !claimedVoucher) {
+        await supabase.from("user_sessions").delete().eq("id", session.id);
+        return json({ success: false, error: "Voucher was already redeemed" }, 409);
+      }
 
-      // Activate session
-      await supabase.functions.invoke('session-manager', {
-        body: { 
-          action: 'activate', 
-          sessionId: session.id, 
-          macAddress: macAddress 
-        }
-      })
+      const { data: activation, error: activationError } = await supabase.functions.invoke("session-manager", {
+        body: { action: "activate", sessionId: session.id, macAddress, internalSecret },
+      });
 
-      console.log('Voucher redeemed:', voucherCode)
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          session: session,
-          package: voucher.access_packages,
-          message: 'Voucher redeemed successfully' 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      if (activationError || !activation?.success) {
+        await supabase.from("user_sessions").update({ network_status: "failed", updated_at: new Date().toISOString() }).eq("id", session.id);
+      }
+
+      return json({
+        success: true,
+        session: activation?.session || session,
+        package: voucher.access_packages,
+        networkProvisioned: !activationError && activation?.networkProvisioned === true,
+        message: activationError?.message || activation?.networkMessage || null,
+      });
     }
 
-    throw new Error('Invalid action')
-
+    return json({ success: false, error: "Invalid action" }, 400);
   } catch (error) {
-    console.error('Voucher error:', error)
-    return new Response(
-      JSON.stringify({ success: false, error: error.message }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500 
-      }
-    )
+    console.error("Voucher error", error);
+    return json({ success: false, error: error instanceof Error ? error.message : "Voucher request failed" }, 500);
   }
-})
-
-function generateVoucherCode(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-  let result = ''
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return result
-}
+});

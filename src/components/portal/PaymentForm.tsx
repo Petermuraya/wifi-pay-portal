@@ -1,12 +1,10 @@
-
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { ArrowLeft, LockKeyhole, Smartphone, Zap } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Smartphone, CreditCard } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -20,170 +18,105 @@ interface PaymentFormProps {
   onBack: () => void;
 }
 
+const normalizeKenyanPhone = (value: string) => {
+  const digits = value.replace(/\D/g, "");
+  if (/^0[17]\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
+  if (/^[17]\d{8}$/.test(digits)) return `254${digits}`;
+  if (/^254[17]\d{8}$/.test(digits)) return digits;
+  return "";
+};
+
+const formatDuration = (minutes: number) => {
+  if (minutes < 60) return `${minutes} minutes`;
+  if (minutes < 1440) return `${minutes / 60} hours`;
+  return `${minutes / 1440} days`;
+};
+
 export function PaymentForm({ package: pkg, macAddress, onPaymentCreated, onBack }: PaymentFormProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const { toast } = useToast();
 
-  const createPaymentMutation = useMutation({
-    mutationFn: async ({ phoneNumber }: { phoneNumber: string }) => {
-      // Create user session
-      const { data: session, error: sessionError } = await supabase
-        .from("user_sessions")
-        .insert({
-          mac_address: macAddress,
-          phone_number: phoneNumber,
-          expires_at: new Date(Date.now() + pkg.duration_minutes * 60 * 1000).toISOString(),
-        })
-        .select()
-        .single();
+  const paymentMutation = useMutation({
+    mutationFn: async () => {
+      const phone = normalizeKenyanPhone(phoneNumber);
+      if (!phone) throw new Error("Enter a valid Kenyan M-Pesa number, for example 0712345678 or 0112345678.");
 
-      if (sessionError) throw sessionError;
-
-      // Create payment record
-      const { data: payment, error: paymentError } = await supabase
-        .from("payments")
-        .insert({
-          session_id: session.id,
-          phone_number: phoneNumber,
-          amount: pkg.price,
-          status: "pending",
-        })
-        .select()
-        .single();
-
-      if (paymentError) throw paymentError;
-
-      // Initiate STK Push
-      const { data: stkResponse, error: stkError } = await supabase.functions.invoke('mpesa-stk-push', {
-        body: {
-          paymentId: payment.id,
-          phoneNumber: phoneNumber,
-          amount: pkg.price
-        }
+      const { data, error } = await supabase.functions.invoke("mpesa-stk-push", {
+        body: { packageId: pkg.id, phoneNumber: phone, macAddress },
       });
 
-      if (stkError) {
-        console.error('STK Push error:', stkError);
-        throw new Error('Failed to initiate M-Pesa payment');
-      }
-
-      if (!stkResponse.success) {
-        console.error('STK Push failed:', stkResponse);
-        throw new Error(stkResponse.message || 'M-Pesa payment failed');
-      }
-
-      console.log('STK Push successful:', stkResponse);
-      return payment;
+      if (error) throw new Error("Could not start the M-Pesa payment. Please try again.");
+      if (!data?.success || !data?.payment) throw new Error(data?.message || "M-Pesa payment could not be started.");
+      return data.payment as Payment;
     },
     onSuccess: (payment) => {
-      toast({
-        title: "Payment Initiated",
-        description: "Please check your phone for the M-Pesa prompt and enter your PIN.",
-      });
+      toast({ title: "M-Pesa request sent", description: "Check your phone and enter your M-Pesa PIN." });
       onPaymentCreated(payment);
     },
-    onError: (error) => {
-      console.error("Payment creation failed:", error);
-      toast({
-        title: "Payment Failed",
-        description: error.message || "Failed to initiate payment. Please try again.",
-        variant: "destructive",
-      });
+    onError: (error: Error) => {
+      toast({ title: "Payment not started", description: error.message, variant: "destructive" });
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!phoneNumber) {
-      toast({
-        title: "Phone Number Required",
-        description: "Please enter your M-Pesa phone number.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Basic phone number validation for Kenya
-    const cleanPhone = phoneNumber.replace(/\s/g, "");
-    if (!/^(254|0)[7][0-9]{8}$/.test(cleanPhone)) {
-      toast({
-        title: "Invalid Phone Number",
-        description: "Please enter a valid Kenyan phone number (07XXXXXXXX or 254XXXXXXXXX).",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    createPaymentMutation.mutate({ phoneNumber: cleanPhone });
-  };
-
-  const formatDuration = (minutes: number) => {
-    if (minutes < 60) return `${minutes} minutes`;
-    if (minutes < 1440) return `${Math.floor(minutes / 60)} hours`;
-    return `${Math.floor(minutes / 1440)} days`;
-  };
-
   return (
-    <div className="max-w-md mx-auto">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center mb-4">
-            <Button variant="ghost" size="sm" onClick={onBack} className="mr-2">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <CardTitle>Complete Payment</CardTitle>
-          </div>
-        </CardHeader>
-        
-        <CardContent className="space-y-6">
-          {/* Package Summary */}
-          <Card className="bg-gray-50">
-            <CardContent className="pt-4">
-              <h3 className="font-semibold mb-2">{pkg.name}</h3>
-              <div className="space-y-1 text-sm text-gray-600">
-                <p>Duration: {formatDuration(pkg.duration_minutes)}</p>
-                <p>Amount: KSh {pkg.price}</p>
-              </div>
-            </CardContent>
-          </Card>
+    <div className="mx-auto max-w-lg">
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-950">
+        <ArrowLeft className="h-4 w-4" /> Back to packages
+      </button>
 
-          {/* Payment Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-lg">
+        <div className="bg-slate-950 p-6 text-white">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Selected package</p>
+          <div className="mt-3 flex items-end justify-between gap-4">
             <div>
-              <Label htmlFor="phone">M-Pesa Phone Number</Label>
-              <div className="relative mt-1">
-                <Smartphone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="07XXXXXXXX or 254XXXXXXXXX"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Enter your Safaricom number to receive the payment prompt
-              </p>
+              <h2 className="text-2xl font-bold">{pkg.name}</h2>
+              <p className="mt-1 text-sm text-slate-400">{formatDuration(pkg.duration_minutes)} access</p>
             </div>
-
-            <Button 
-              type="submit" 
-              className="w-full" 
-              disabled={createPaymentMutation.isPending}
-            >
-              <CreditCard className="h-4 w-4 mr-2" />
-              {createPaymentMutation.isPending ? "Processing..." : `Pay KSh ${pkg.price}`}
-            </Button>
-          </form>
-
-          <div className="text-center text-xs text-gray-500">
-            <p>You will receive an M-Pesa prompt on your phone</p>
-            <p>Enter your M-Pesa PIN to complete the payment</p>
+            <div className="text-right">
+              <span className="text-sm text-slate-400">KSh</span>
+              <div className="text-3xl font-black">{Number(pkg.price).toLocaleString()}</div>
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+
+        <form
+          className="space-y-5 p-6"
+          onSubmit={(event) => {
+            event.preventDefault();
+            paymentMutation.mutate();
+          }}
+        >
+          <div>
+            <Label htmlFor="phone" className="text-sm font-semibold">M-Pesa phone number</Label>
+            <div className="relative mt-2">
+              <Smartphone className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+              <Input
+                id="phone"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="0712 345 678 or 0112 345 678"
+                value={phoneNumber}
+                onChange={(event) => setPhoneNumber(event.target.value)}
+                className="h-12 rounded-xl pl-11 text-base"
+              />
+            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-500">We send an STK push to this M-Pesa number. Package price and duration are verified on the server.</p>
+          </div>
+
+          <div className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-900">
+            <div className="flex items-center gap-2 font-semibold"><Zap className="h-4 w-4" /> What happens next?</div>
+            <p className="mt-1.5 leading-5 text-emerald-800">Approve the prompt on your phone. After Safaricom confirms payment, the hotspot activates this device automatically.</p>
+          </div>
+
+          <Button type="submit" disabled={paymentMutation.isPending} className="h-12 w-full rounded-xl bg-[#00a651] text-base font-bold hover:bg-[#008f46]">
+            {paymentMutation.isPending ? "Sending M-Pesa prompt…" : `Pay KSh ${Number(pkg.price).toLocaleString()}`}
+          </Button>
+
+          <div className="flex items-center justify-center gap-2 text-xs text-slate-400">
+            <LockKeyhole className="h-3.5 w-3.5" /> Secure server-side payment request
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

@@ -1,216 +1,137 @@
-
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Activity, Clock3, LogOut, RefreshCw, Router, Ticket, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Wifi, Clock, Users, Activity } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Database } from "@/integrations/supabase/types";
-
-type UserSession = Database["public"]["Tables"]["user_sessions"]["Row"];
 
 interface SessionMonitorProps {
   macAddress: string;
 }
 
 export function SessionMonitor({ macAddress }: SessionMonitorProps) {
+  const [retryingNetwork, setRetryingNetwork] = useState(false);
   const { toast } = useToast();
 
-  const { data: currentSession, refetch } = useQuery({
+  const { data: currentSession, refetch, isLoading } = useQuery({
     queryKey: ["current-session", macAddress],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("user_sessions")
-        .select("*, payments(*)")
-        .eq("mac_address", macAddress)
-        .eq("status", "active")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      
-      if (error) throw error;
-      return data;
+      const { data, error } = await supabase.functions.invoke("session-manager", {
+        body: { action: "current-session", macAddress },
+      });
+      if (error || !data?.success) throw new Error(data?.message || "Could not check WiFi session");
+      return data.session as any | null;
     },
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: 15000,
   });
 
-  const { data: allSessions } = useQuery({
-    queryKey: ["session-history", macAddress],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("user_sessions")
-        .select("*, payments(*)")
-        .eq("mac_address", macAddress)
-        .order("created_at", { ascending: false })
-        .limit(10);
-      
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const getTimeRemaining = (expiresAt: string) => {
-    const now = new Date().getTime();
-    const expires = new Date(expiresAt).getTime();
-    const remaining = expires - now;
-    
-    if (remaining <= 0) return "Expired";
-    
-    const hours = Math.floor(remaining / (1000 * 60 * 60));
-    const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
-    
-    return `${hours}h ${minutes}m`;
-  };
-
-  const getTimeProgress = (createdAt: string, expiresAt: string) => {
-    const start = new Date(createdAt).getTime();
-    const end = new Date(expiresAt).getTime();
-    const now = new Date().getTime();
-    
-    const total = end - start;
-    const elapsed = now - start;
-    
-    return Math.min(Math.max((elapsed / total) * 100, 0), 100);
-  };
-
-  const handleDisconnect = async () => {
+  const retryNetwork = async () => {
     if (!currentSession) return;
-
+    setRetryingNetwork(true);
     try {
-      const { data, error } = await supabase.functions.invoke('session-manager', {
-        body: {
-          action: 'deactivate',
-          sessionId: currentSession.id,
-          macAddress: macAddress
-        }
+      const { data, error } = await supabase.functions.invoke("session-manager", {
+        body: { action: "retry-network", sessionId: currentSession.id, macAddress },
       });
-
-      if (error) throw error;
-
+      if (error || !data?.success) throw new Error(data?.message || "Could not retry WiFi activation");
       toast({
-        title: "Disconnected",
-        description: "You have been disconnected from the WiFi.",
+        title: data.networkProvisioned ? "WiFi activated" : "Activation retried",
+        description: data.networkProvisioned ? "The hotspot has authorized this device." : data.networkMessage || "The router is still unavailable.",
       });
-
-      refetch();
+      await refetch();
     } catch (error) {
-      console.error('Disconnect error:', error);
-      toast({
-        title: "Disconnect Failed",
-        description: "Failed to disconnect. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Activation retry failed", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setRetryingNetwork(false);
     }
   };
 
+  const disconnect = async () => {
+    if (!currentSession) return;
+    const { data, error } = await supabase.functions.invoke("session-manager", {
+      body: { action: "deactivate", sessionId: currentSession.id, macAddress },
+    });
+    if (error || !data?.success) {
+      toast({ title: "Could not disconnect", description: data?.message || "Please try again.", variant: "destructive" });
+      return;
+    }
+    toast({ title: "Disconnected", description: "Your WiFi session has been closed." });
+    refetch();
+  };
+
+  if (isLoading) {
+    return <div className="mx-auto max-w-lg rounded-3xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Checking your WiFi session…</div>;
+  }
+
   if (!currentSession) {
     return (
-      <Card>
-        <CardContent className="pt-6 text-center">
-          <Wifi className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">No active session found</p>
-          <p className="text-sm text-gray-500 mt-2">Purchase a package to get connected</p>
-        </CardContent>
-      </Card>
+      <div className="mx-auto max-w-lg rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400"><Wifi className="h-7 w-7" /></div>
+        <h2 className="mt-5 text-xl font-bold">No active access session</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-500">Buy a package, redeem a voucher or reconnect an existing paid session.</p>
+      </div>
     );
   }
 
-  const timeRemaining = getTimeRemaining(currentSession.expires_at || "");
-  const progress = getTimeProgress(
-    currentSession.created_at || "", 
-    currentSession.expires_at || ""
-  );
+  const createdAt = new Date(currentSession.created_at || Date.now()).getTime();
+  const expiresAt = new Date(currentSession.expires_at || Date.now()).getTime();
+  const total = Math.max(expiresAt - createdAt, 1);
+  const remaining = Math.max(expiresAt - Date.now(), 0);
+  const usedPercent = Math.min(100, Math.max(0, ((Date.now() - createdAt) / total) * 100));
+  const hours = Math.floor(remaining / 3_600_000);
+  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
+  const networkActive = currentSession.network_status === "active";
+  const networkFailed = currentSession.network_status === "failed";
 
   return (
-    <div className="space-y-6">
-      {/* Active Session */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Activity className="h-5 w-5 mr-2 text-green-500" />
-            Active Session
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-600">Status</span>
-            <Badge variant="default" className="bg-green-500">
-              {currentSession.status}
-            </Badge>
+    <div className="mx-auto max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${networkActive ? "bg-emerald-100 text-emerald-800" : networkFailed ? "bg-orange-100 text-orange-800" : "bg-amber-100 text-amber-800"}`}>
+            <span className={`h-2 w-2 rounded-full ${networkActive ? "bg-emerald-500" : networkFailed ? "bg-orange-500" : "bg-amber-500"}`} />
+            {networkActive ? "Connected" : networkFailed ? "Activation issue" : "Activating"}
           </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-600">Time Remaining</span>
-            <span className="font-semibold">{timeRemaining}</span>
-          </div>
-          
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span>Session Progress</span>
-              <span>{Math.round(progress)}%</span>
-            </div>
-            <Progress value={progress} className="h-2" />
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-600">Phone</span>
-            <span className="text-sm">{currentSession.phone_number}</span>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-600">Started</span>
-            <span className="text-sm">
-              {new Date(currentSession.created_at || "").toLocaleString()}
-            </span>
-          </div>
-          
-          <Button 
-            onClick={handleDisconnect}
-            variant="outline" 
-            className="w-full mt-4"
-          >
-            Disconnect Session
-          </Button>
-        </CardContent>
-      </Card>
+          <h2 className="mt-4 text-2xl font-bold tracking-tight">Your WiFi session</h2>
+        </div>
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white">
+          {networkActive ? <Activity className="h-5 w-5" /> : <Router className="h-5 w-5" />}
+        </div>
+      </div>
 
-      {/* Session History */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Clock className="h-5 w-5 mr-2" />
-            Session History
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {allSessions?.map((session) => (
-              <div 
-                key={session.id} 
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-              >
-                <div>
-                  <p className="text-sm font-medium">
-                    {new Date(session.created_at || "").toLocaleDateString()}
-                  </p>
-                  <p className="text-xs text-gray-600">
-                    {session.phone_number}
-                  </p>
-                </div>
-                <Badge 
-                  variant={session.status === 'active' ? 'default' : 'secondary'}
-                  className={session.status === 'active' ? 'bg-green-500' : ''}
-                >
-                  {session.status}
-                </Badge>
-              </div>
-            ))}
+      {networkFailed && (
+        <div className="mt-5 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-sm leading-6 text-orange-900">
+          Your payment or voucher is valid, but the hotspot controller has not granted network access. Retry activation below or contact the hotspot operator.
+        </div>
+      )}
+
+      <div className="mt-6 rounded-2xl bg-slate-50 p-5">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-slate-500">Time remaining</p>
+            <p className="mt-1 text-3xl font-black tracking-tight">{hours}h {minutes}m</p>
           </div>
-        </CardContent>
-      </Card>
+          <Clock3 className="h-6 w-6 text-slate-300" />
+        </div>
+        <Progress value={usedPercent} className="mt-4 h-2" />
+      </div>
+
+      <div className="mt-5 space-y-3 text-sm">
+        <div className="flex justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">Device</span><span className="font-mono text-xs font-semibold">{macAddress}</span></div>
+        <div className="flex justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">Access</span><span className="inline-flex items-center gap-1.5 font-semibold capitalize">{currentSession.access_method === "voucher" && <Ticket className="h-3.5 w-3.5" />}{currentSession.access_method || "WiFi"}</span></div>
+        {currentSession.package_name && <div className="flex justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">Package</span><span className="font-semibold">{currentSession.package_name}</span></div>}
+        {currentSession.phone_number && currentSession.phone_number !== "VOUCHER" && <div className="flex justify-between gap-4 border-b border-slate-100 pb-3"><span className="text-slate-500">Phone</span><span className="font-semibold">{currentSession.phone_number}</span></div>}
+        <div className="flex justify-between gap-4"><span className="text-slate-500">Expires</span><span className="font-semibold">{new Date(currentSession.expires_at || "").toLocaleString()}</span></div>
+      </div>
+
+      {!networkActive && (
+        <Button className="mt-6 h-11 w-full rounded-xl" onClick={retryNetwork} disabled={retryingNetwork}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${retryingNetwork ? "animate-spin" : ""}`} /> Retry WiFi activation
+        </Button>
+      )}
+
+      <Button variant="outline" className={`${networkActive ? "mt-6" : "mt-3"} h-11 w-full rounded-xl`} onClick={disconnect}>
+        <LogOut className="mr-2 h-4 w-4" /> Disconnect this session
+      </Button>
     </div>
   );
 }

@@ -1,10 +1,8 @@
-
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, CheckCircle2, Clock3, Copy, RefreshCw, Router, Wifi, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, Clock, XCircle, RefreshCw, ArrowLeft, Wifi, Copy, Key } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Database } from "@/integrations/supabase/types";
 
@@ -12,221 +10,164 @@ type Payment = Database["public"]["Tables"]["payments"]["Row"];
 
 interface PaymentStatusProps {
   payment: Payment;
+  macAddress: string;
+  originalUrl?: string;
   onBack: () => void;
+  onSessionActivated?: (session: any) => void;
 }
 
-export function PaymentStatus({ payment, onBack }: PaymentStatusProps) {
-  const [pollingCount, setPollingCount] = useState(0);
-  const maxPolling = 30; // Poll for 5 minutes (30 * 10 seconds)
+export function PaymentStatus({ payment, macAddress, originalUrl, onBack, onSessionActivated }: PaymentStatusProps) {
+  const [checks, setChecks] = useState(0);
+  const [retryingNetwork, setRetryingNetwork] = useState(false);
+  const activatedRef = useRef(false);
   const { toast } = useToast();
 
-  const { data: currentPayment, refetch } = useQuery({
-    queryKey: ["payment-status", payment.id],
+  const { data: statusData, refetch, isFetching } = useQuery({
+    queryKey: ["payment-status", payment.id, macAddress],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payments")
-        .select("*")
-        .eq("id", payment.id)
-        .single();
-      
-      if (error) throw error;
-      return data;
+      const { data, error } = await supabase.functions.invoke("session-manager", {
+        body: { action: "payment-status", paymentId: payment.id, macAddress },
+      });
+      if (error || !data?.success) throw new Error(data?.message || "Could not check payment status");
+      return data as { payment: Payment; session: any | null };
     },
-    initialData: payment,
+    initialData: { payment, session: null },
     refetchInterval: (query) => {
-      return query.state.data?.status === "pending" && pollingCount < maxPolling ? 10000 : false;
+      const current = query.state.data as { payment?: Payment; session?: any } | undefined;
+      const paymentPending = current?.payment?.status === "pending";
+      const networkPending = current?.payment?.status === "completed" && current?.session?.network_status !== "active";
+      return (paymentPending || networkPending) && checks < 60 ? 5000 : false;
     },
   });
 
+  const currentPayment = statusData?.payment || payment;
+  const session = statusData?.session;
+
   useEffect(() => {
-    if (currentPayment?.status === "pending" && pollingCount < maxPolling) {
-      const timer = setTimeout(() => {
-        setPollingCount(prev => prev + 1);
-      }, 10000);
-      return () => clearTimeout(timer);
+    const waitingForPayment = currentPayment?.status === "pending";
+    const waitingForNetwork = currentPayment?.status === "completed" && session?.network_status !== "active";
+    if ((waitingForPayment || waitingForNetwork) && checks < 60) {
+      const timer = window.setTimeout(() => setChecks((value) => value + 1), 5000);
+      return () => window.clearTimeout(timer);
     }
-  }, [currentPayment?.status, pollingCount, maxPolling]);
+  }, [currentPayment?.status, session?.network_status, checks]);
 
-  const handleManualRefresh = () => {
-    refetch();
-    setPollingCount(prev => prev + 1);
+  useEffect(() => {
+    if (currentPayment?.status !== "completed" || session?.network_status !== "active" || activatedRef.current) return;
+    activatedRef.current = true;
+    sessionStorage.setItem("captive_portal_auth", "success");
+    onSessionActivated?.(session);
+  }, [currentPayment?.status, session, onSessionActivated]);
+
+  const copyCode = async () => {
+    if (!currentPayment?.reconnection_code) return;
+    await navigator.clipboard.writeText(currentPayment.reconnection_code);
+    toast({ title: "Reconnection code copied" });
   };
 
-  const copyReconnectionCode = () => {
-    if (currentPayment?.reconnection_code) {
-      navigator.clipboard.writeText(currentPayment.reconnection_code);
-      toast({
-        title: "Code Copied",
-        description: "Reconnection code copied to clipboard",
+  const retryNetwork = async () => {
+    if (!session?.id) return;
+    setRetryingNetwork(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("session-manager", {
+        body: { action: "retry-network", sessionId: session.id, macAddress },
       });
+      if (error || !data?.success) throw new Error(data?.message || "Could not retry WiFi activation");
+      toast({
+        title: data.networkProvisioned ? "WiFi activated" : "Activation sent",
+        description: data.networkProvisioned ? "The hotspot has authorized this device." : data.networkMessage || "The router is still being contacted.",
+      });
+      await refetch();
+    } catch (error) {
+      toast({ title: "Activation retry failed", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setRetryingNetwork(false);
     }
   };
 
-  const getStatusIcon = () => {
-    switch (currentPayment?.status) {
-      case "completed":
-        return <CheckCircle className="h-16 w-16 text-green-500" />;
-      case "failed":
-      case "expired":
-        return <XCircle className="h-16 w-16 text-red-500" />;
-      case "pending":
-      default:
-        return <Clock className="h-16 w-16 text-yellow-500" />;
-    }
-  };
-
-  const getStatusMessage = () => {
-    switch (currentPayment?.status) {
-      case "completed":
-        return {
-          title: "Payment Successful!",
-          description: "Your internet access is now active. You can start browsing immediately.",
-          color: "text-green-600"
-        };
-      case "failed":
-        return {
-          title: "Payment Failed",
-          description: "Your payment could not be processed. Please try again.",
-          color: "text-red-600"
-        };
-      case "expired":
-        return {
-          title: "Payment Expired",
-          description: "The payment request has expired. Please start a new payment.",
-          color: "text-red-600"
-        };
-      case "pending":
-      default:
-        return {
-          title: "Waiting for Payment",
-          description: "Please check your phone for the M-Pesa prompt and complete the payment.",
-          color: "text-yellow-600"
-        };
-    }
-  };
-
-  const status = getStatusMessage();
+  const status = currentPayment?.status || "pending";
+  const paymentSuccessful = status === "completed";
+  const connected = paymentSuccessful && session?.network_status === "active";
+  const networkFailed = paymentSuccessful && session?.network_status === "failed";
+  const failed = status === "failed" || status === "expired";
 
   return (
-    <div className="max-w-md mx-auto">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center mb-4">
-            <Button variant="ghost" size="sm" onClick={onBack} className="mr-2">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <CardTitle>Payment Status</CardTitle>
-          </div>
-        </CardHeader>
-        
-        <CardContent className="text-center space-y-6">
-          {/* Status Icon */}
-          <div className="flex justify-center">
-            {getStatusIcon()}
-          </div>
+    <div className="mx-auto max-w-lg">
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-950">
+        <ArrowLeft className="h-4 w-4" /> Back
+      </button>
 
-          {/* Status Message */}
-          <div>
-            <h3 className={`text-xl font-semibold mb-2 ${status.color}`}>
-              {status.title}
-            </h3>
-            <p className="text-gray-600">
-              {status.description}
-            </p>
-          </div>
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-lg sm:p-8">
+        <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full ${connected ? "bg-emerald-100 text-emerald-700" : failed ? "bg-red-100 text-red-700" : networkFailed ? "bg-orange-100 text-orange-700" : "bg-amber-100 text-amber-700"}`}>
+          {connected ? <CheckCircle2 className="h-9 w-9" /> : failed ? <XCircle className="h-9 w-9" /> : networkFailed ? <Router className="h-9 w-9" /> : <Clock3 className="h-9 w-9" />}
+        </div>
 
-          {/* Payment Details */}
-          <Card className="bg-gray-50">
-            <CardContent className="pt-4">
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span>Amount:</span>
-                  <span className="font-semibold">KSh {currentPayment?.amount}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Phone:</span>
-                  <span>{currentPayment?.phone_number}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Status:</span>
-                  <span className={`capitalize font-semibold ${status.color}`}>
-                    {currentPayment?.status}
-                  </span>
-                </div>
-                {currentPayment?.mpesa_receipt_number && (
-                  <div className="flex justify-between">
-                    <span>Receipt:</span>
-                    <span className="font-mono text-xs">{currentPayment.mpesa_receipt_number}</span>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+        <h2 className="mt-5 text-2xl font-bold tracking-tight">
+          {connected
+            ? "You’re connected"
+            : failed
+              ? "Payment not completed"
+              : networkFailed
+                ? "Payment received — activation needs attention"
+                : paymentSuccessful
+                  ? "Payment received — activating WiFi"
+                  : "Approve the M-Pesa prompt"}
+        </h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-500">
+          {connected
+            ? originalUrl ? "Payment and hotspot activation are confirmed. We’re returning you to your original page." : "Payment is confirmed and the router has activated this device."
+            : failed
+              ? "The request was cancelled, failed or expired. You can safely try again."
+              : networkFailed
+                ? "Your M-Pesa payment is safe, but the hotspot controller has not activated this device yet. Retry activation or keep your reconnection code and contact the hotspot operator."
+                : paymentSuccessful
+                  ? "Safaricom confirmed your payment. We are waiting for the hotspot controller to authorize this device."
+                  : "Enter your M-Pesa PIN on your phone. This page checks Safaricom confirmation automatically."}
+        </p>
 
-          {/* Reconnection Code for Completed Payments */}
-          {currentPayment?.status === "completed" && currentPayment?.reconnection_code && (
-            <Card className="bg-blue-50 border-blue-200">
-              <CardContent className="pt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-blue-800">Reconnection Code:</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={copyReconnectionCode}
-                    className="h-6 p-1 text-blue-600"
-                  >
-                    <Copy className="h-3 w-3" />
-                  </Button>
-                </div>
-                <div className="bg-white rounded px-3 py-2 border border-blue-200">
-                  <span className="font-mono text-lg font-bold text-blue-900">
-                    {currentPayment.reconnection_code}
-                  </span>
-                </div>
-                <p className="text-xs text-blue-600 mt-2">
-                  <Key className="h-3 w-3 inline mr-1" />
-                  Use this code to reconnect if you're not automatically connected
-                </p>
-              </CardContent>
-            </Card>
-          )}
+        <div className="mt-6 rounded-2xl bg-slate-50 p-4 text-sm">
+          <div className="flex justify-between gap-4 py-1"><span className="text-slate-500">Amount</span><strong>KSh {Number(currentPayment?.amount || 0).toLocaleString()}</strong></div>
+          <div className="flex justify-between gap-4 py-1"><span className="text-slate-500">Phone</span><strong>{currentPayment?.phone_number}</strong></div>
+          <div className="flex justify-between gap-4 py-1"><span className="text-slate-500">Payment</span><strong className="capitalize">{status}</strong></div>
+          {paymentSuccessful && <div className="flex justify-between gap-4 py-1"><span className="text-slate-500">Network</span><strong className="capitalize">{session?.network_status || "activating"}</strong></div>}
+          {currentPayment?.mpesa_receipt_number && <div className="flex justify-between gap-4 py-1"><span className="text-slate-500">Receipt</span><strong className="font-mono text-xs">{currentPayment.mpesa_receipt_number}</strong></div>}
+        </div>
 
-          {/* Actions */}
-          <div className="space-y-3">
-            {currentPayment?.status === "pending" && (
-              <Button 
-                onClick={handleManualRefresh}
-                variant="outline" 
-                className="w-full"
-                disabled={pollingCount >= maxPolling}
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Check Payment Status
-              </Button>
-            )}
-
-            {currentPayment?.status === "completed" && (
-              <div className="flex items-center justify-center text-green-600 bg-green-50 rounded-lg p-4">
-                <Wifi className="h-5 w-5 mr-2" />
-                <span className="font-semibold">Internet Access Active</span>
-              </div>
-            )}
-
-            {(currentPayment?.status === "failed" || currentPayment?.status === "expired") && (
-              <Button onClick={onBack} className="w-full">
-                Try Again
-              </Button>
-            )}
-          </div>
-
-          {currentPayment?.status === "pending" && pollingCount >= maxPolling && (
-            <div className="text-xs text-gray-500 bg-yellow-50 rounded-lg p-3">
-              <p>Payment verification timeout reached.</p>
-              <p>If you completed the payment, please contact support.</p>
+        {paymentSuccessful && currentPayment?.reconnection_code && (
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Save this reconnection code</p>
+            <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-white px-4 py-3">
+              <span className="font-mono text-xl font-black tracking-[0.2em]">{currentPayment.reconnection_code}</span>
+              <Button type="button" size="sm" variant="ghost" onClick={copyCode}><Copy className="h-4 w-4" /></Button>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+
+        {(status === "pending" || (paymentSuccessful && !connected)) && (
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" className="w-full rounded-xl" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`} /> Check status
+            </Button>
+            {paymentSuccessful && session?.id && (
+              <Button className="w-full rounded-xl" onClick={retryNetwork} disabled={retryingNetwork}>
+                <Router className={`mr-2 h-4 w-4 ${retryingNetwork ? "animate-pulse" : ""}`} /> Retry activation
+              </Button>
+            )}
+          </div>
+        )}
+
+        {connected && (
+          <div className="mt-5 flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white">
+            <Wifi className="h-4 w-4 text-emerald-400" /> Internet access active
+          </div>
+        )}
+
+        {failed && <Button className="mt-5 w-full rounded-xl" onClick={onBack}>Try again</Button>}
+
+        {checks >= 60 && !connected && !failed && (
+          <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">This is taking longer than expected. If money was deducted, keep your M-Pesa receipt and reconnection code and contact the hotspot operator.</p>
+        )}
+      </div>
     </div>
   );
 }
