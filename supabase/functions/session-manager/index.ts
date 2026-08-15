@@ -84,11 +84,18 @@ serve(async (req) => {
     });
 
     const authorizeNetwork = async (sessionId: string, deviceMac: string) => {
-      if (!internalSecret) return { networkProvisioned: false, networkMessage: "Network service is not configured" };
+      if (!internalSecret) {
+        await supabase
+          .from("user_sessions")
+          .update({ network_status: "failed", updated_at: new Date().toISOString() })
+          .eq("id", sessionId);
+        return { networkProvisioned: false, networkMessage: "Network service is not configured" };
+      }
+
       const { data: network, error: networkError } = await supabase.functions.invoke("radius-auth", {
         body: { action: "authorize", sessionId, macAddress: deviceMac, internalSecret },
       });
-      if (networkError) {
+      if (networkError || network?.networkProvisioned !== true) {
         await supabase.from("user_sessions").update({ network_status: "failed", updated_at: new Date().toISOString() }).eq("id", sessionId);
       }
       return {
@@ -97,13 +104,38 @@ serve(async (req) => {
       };
     };
 
+    const expireStalePayment = async (payment: any) => {
+      if (payment?.status !== "pending" || !payment.created_at) return payment;
+      const ageMs = Date.now() - new Date(payment.created_at).getTime();
+      if (ageMs < 15 * 60_000) return payment;
+
+      const { data: expiredPayment, error: paymentError } = await supabase
+        .from("payments")
+        .update({ status: "expired", updated_at: new Date().toISOString() })
+        .eq("id", payment.id)
+        .eq("status", "pending")
+        .select()
+        .maybeSingle();
+      if (paymentError) throw paymentError;
+
+      if (payment.session_id) {
+        await supabase
+          .from("user_sessions")
+          .update({ status: "terminated", network_status: "disconnected", updated_at: new Date().toISOString() })
+          .eq("id", payment.session_id)
+          .eq("status", "pending");
+      }
+      return expiredPayment || { ...payment, status: "expired" };
+    };
+
     if (action === "payment-status") {
       const paymentId = String(body.paymentId || "");
       if (!paymentId || !macAddress) return json({ success: false, message: "Invalid payment status request" }, 400);
 
-      const { data: payment, error: paymentError } = await supabase.from("payments").select("*").eq("id", paymentId).maybeSingle();
-      if (paymentError || !payment || !payment.session_id) return json({ success: false, message: "Payment not found" }, 404);
+      const { data: foundPayment, error: paymentError } = await supabase.from("payments").select("*").eq("id", paymentId).maybeSingle();
+      if (paymentError || !foundPayment || !foundPayment.session_id) return json({ success: false, message: "Payment not found" }, 404);
 
+      const payment = await expireStalePayment(foundPayment);
       const { data: session } = await supabase.from("user_sessions").select("*").eq("id", payment.session_id).eq("mac_address", macAddress).maybeSingle();
       if (!session) return json({ success: false, message: "Payment does not belong to this device" }, 403);
 
@@ -239,11 +271,14 @@ serve(async (req) => {
 
     if (action === "check-expired") {
       if (!cronSecret || body.cronKey !== cronSecret) return json({ success: false, message: "Unauthorized cron action" }, 401);
+      const nowIso = new Date().toISOString();
+      const staleCutoff = new Date(Date.now() - 15 * 60_000).toISOString();
+
       const { data: expiredSessions, error } = await supabase
         .from("user_sessions")
         .select("*")
         .eq("status", "active")
-        .lt("expires_at", new Date().toISOString());
+        .lt("expires_at", nowIso);
       if (error) throw error;
 
       for (const session of expiredSessions || []) {
@@ -252,10 +287,33 @@ serve(async (req) => {
         });
         await supabase
           .from("user_sessions")
-          .update({ status: "expired", network_status: "disconnected", updated_at: new Date().toISOString() })
+          .update({ status: "expired", network_status: "disconnected", updated_at: nowIso })
           .eq("id", session.id);
       }
-      return json({ success: true, expiredCount: expiredSessions?.length || 0 });
+
+      const { data: stalePayments, error: stalePaymentsError } = await supabase
+        .from("payments")
+        .select("id,session_id")
+        .eq("status", "pending")
+        .lt("created_at", staleCutoff);
+      if (stalePaymentsError) throw stalePaymentsError;
+
+      for (const payment of stalePayments || []) {
+        await supabase.from("payments").update({ status: "expired", updated_at: nowIso }).eq("id", payment.id).eq("status", "pending");
+        if (payment.session_id) {
+          await supabase
+            .from("user_sessions")
+            .update({ status: "terminated", network_status: "disconnected", updated_at: nowIso })
+            .eq("id", payment.session_id)
+            .eq("status", "pending");
+        }
+      }
+
+      return json({
+        success: true,
+        expiredSessionCount: expiredSessions?.length || 0,
+        expiredPaymentCount: stalePayments?.length || 0,
+      });
     }
 
     return json({ success: false, message: "Invalid action" }, 400);
