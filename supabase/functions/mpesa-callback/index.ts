@@ -9,6 +9,14 @@ const corsHeaders = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+const normalizePhone = (value: unknown) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (/^0[17]\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
+  if (/^[17]\d{8}$/.test(digits)) return `254${digits}`;
+  if (/^254[17]\d{8}$/.test(digits)) return digits;
+  return "";
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ message: "Method not allowed" }, 405);
@@ -17,7 +25,10 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const internalSecret = Deno.env.get("INTERNAL_FUNCTION_SECRET") || "";
-    if (!supabaseUrl || !serviceRoleKey || !internalSecret) return json({ message: "Callback service is not configured" }, 503);
+    const expectedCallbackSecret = Deno.env.get("MPESA_CALLBACK_SECRET") || "";
+    const suppliedCallbackSecret = new URL(req.url).searchParams.get("token") || "";
+    if (!supabaseUrl || !serviceRoleKey || !internalSecret || !expectedCallbackSecret) return json({ message: "Callback service is not configured" }, 503);
+    if (suppliedCallbackSecret !== expectedCallbackSecret) return json({ message: "Unauthorized callback" }, 401);
 
     const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const callbackData = await req.json();
@@ -64,9 +75,17 @@ serve(async (req) => {
     const value = (name: string) => items.find((item: any) => item.Name === name)?.Value;
     const paidAmount = Number(value("Amount"));
     const receipt = String(value("MpesaReceiptNumber") || "").trim();
+    const callbackPhone = normalizePhone(value("PhoneNumber"));
 
-    if (!Number.isFinite(paidAmount) || paidAmount < Number(payment.amount) || !receipt) {
-      console.error("M-Pesa callback validation failed", { paymentId: payment.id, expected: payment.amount, received: paidAmount, receipt });
+    if (!Number.isFinite(paidAmount) || paidAmount !== Number(payment.amount) || !receipt || !callbackPhone || callbackPhone !== normalizePhone(payment.phone_number)) {
+      console.error("M-Pesa callback validation failed", {
+        paymentId: payment.id,
+        expectedAmount: payment.amount,
+        receivedAmount: paidAmount,
+        expectedPhone: payment.phone_number,
+        receivedPhone: callbackPhone,
+        hasReceipt: Boolean(receipt),
+      });
       await supabase.from("payments").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", payment.id);
       if (payment.session_id) {
         await supabase
@@ -77,6 +96,28 @@ serve(async (req) => {
       return json({ message: "Payment callback validation failed" }, 400);
     }
 
+    const { data: duplicateReceipt } = await supabase
+      .from("payments")
+      .select("id")
+      .eq("mpesa_receipt_number", receipt)
+      .neq("id", payment.id)
+      .limit(1)
+      .maybeSingle();
+    if (duplicateReceipt) {
+      console.error("Duplicate M-Pesa receipt rejected", { paymentId: payment.id, receipt });
+      await supabase.from("payments").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", payment.id);
+      return json({ message: "Duplicate receipt rejected" }, 409);
+    }
+
+    if (!payment.package_id) return json({ message: "Payment package is missing" }, 500);
+    const { data: accessPackage } = await supabase
+      .from("access_packages")
+      .select("duration_minutes")
+      .eq("id", payment.package_id)
+      .maybeSingle();
+    const durationMinutes = Number(accessPackage?.duration_minutes);
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) return json({ message: "Payment package duration is invalid" }, 500);
+
     let reconnectionCode = "";
     for (let attempt = 0; attempt < 12 && !reconnectionCode; attempt++) {
       const candidate = Math.floor(100000 + Math.random() * 900000).toString();
@@ -84,6 +125,15 @@ serve(async (req) => {
       if (!existing) reconnectionCode = candidate;
     }
     if (!reconnectionCode) throw new Error("Could not allocate a reconnection code");
+
+    const accessExpiresAt = new Date(Date.now() + durationMinutes * 60_000).toISOString();
+    if (payment.session_id) {
+      const { error: sessionError } = await supabase
+        .from("user_sessions")
+        .update({ expires_at: accessExpiresAt, network_status: "pending", updated_at: new Date().toISOString() })
+        .eq("id", payment.session_id);
+      if (sessionError) throw sessionError;
+    }
 
     const { error: paymentError } = await supabase
       .from("payments")
