@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Clock3, LogOut, Router, Ticket, Wifi } from "lucide-react";
+import { Activity, Clock3, LogOut, RefreshCw, Router, Ticket, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -10,6 +11,7 @@ interface SessionMonitorProps {
 }
 
 export function SessionMonitor({ macAddress }: SessionMonitorProps) {
+  const [retryingNetwork, setRetryingNetwork] = useState(false);
   const { toast } = useToast();
 
   const { data: currentSession, refetch, isLoading } = useQuery({
@@ -23,6 +25,26 @@ export function SessionMonitor({ macAddress }: SessionMonitorProps) {
     },
     refetchInterval: 15000,
   });
+
+  const retryNetwork = async () => {
+    if (!currentSession) return;
+    setRetryingNetwork(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("session-manager", {
+        body: { action: "retry-network", sessionId: currentSession.id, macAddress },
+      });
+      if (error || !data?.success) throw new Error(data?.message || "Could not retry WiFi activation");
+      toast({
+        title: data.networkProvisioned ? "WiFi activated" : "Activation retried",
+        description: data.networkProvisioned ? "The hotspot has authorized this device." : data.networkMessage || "The router is still unavailable.",
+      });
+      await refetch();
+    } catch (error) {
+      toast({ title: "Activation retry failed", description: error instanceof Error ? error.message : "Please try again.", variant: "destructive" });
+    } finally {
+      setRetryingNetwork(false);
+    }
+  };
 
   const disconnect = async () => {
     if (!currentSession) return;
@@ -78,7 +100,7 @@ export function SessionMonitor({ macAddress }: SessionMonitorProps) {
 
       {networkFailed && (
         <div className="mt-5 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-sm leading-6 text-orange-900">
-          Your payment/voucher is valid, but the hotspot controller has not granted network access. Contact the hotspot operator if this does not recover automatically.
+          Your payment or voucher is valid, but the hotspot controller has not granted network access. Retry activation below or contact the hotspot operator.
         </div>
       )}
 
@@ -101,7 +123,13 @@ export function SessionMonitor({ macAddress }: SessionMonitorProps) {
         <div className="flex justify-between gap-4"><span className="text-slate-500">Expires</span><span className="font-semibold">{new Date(currentSession.expires_at || "").toLocaleString()}</span></div>
       </div>
 
-      <Button variant="outline" className="mt-6 h-11 w-full rounded-xl" onClick={disconnect}>
+      {!networkActive && (
+        <Button className="mt-6 h-11 w-full rounded-xl" onClick={retryNetwork} disabled={retryingNetwork}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${retryingNetwork ? "animate-spin" : ""}`} /> Retry WiFi activation
+        </Button>
+      )}
+
+      <Button variant="outline" className={`${networkActive ? "mt-6" : "mt-3"} h-11 w-full rounded-xl`} onClick={disconnect}>
         <LogOut className="mr-2 h-4 w-4" /> Disconnect this session
       </Button>
     </div>
