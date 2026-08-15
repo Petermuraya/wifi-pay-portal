@@ -105,6 +105,7 @@ export type Database = {
           id: string
           mpesa_checkout_request_id: string | null
           mpesa_receipt_number: string | null
+          package_id: string | null
           phone_number: string
           reconnection_code: string | null
           reconnection_code_used: boolean | null
@@ -118,6 +119,7 @@ export type Database = {
           id?: string
           mpesa_checkout_request_id?: string | null
           mpesa_receipt_number?: string | null
+          package_id?: string | null
           phone_number: string
           reconnection_code?: string | null
           reconnection_code_used?: boolean | null
@@ -131,6 +133,7 @@ export type Database = {
           id?: string
           mpesa_checkout_request_id?: string | null
           mpesa_receipt_number?: string | null
+          package_id?: string | null
           phone_number?: string
           reconnection_code?: string | null
           reconnection_code_used?: boolean | null
@@ -139,6 +142,13 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payments_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "access_packages"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payments_session_id_fkey"
             columns: ["session_id"]
@@ -155,6 +165,7 @@ export type Database = {
           id: string
           ip_address: unknown | null
           mac_address: string
+          network_status: string
           payment_id: string | null
           phone_number: string
           status: Database["public"]["Enums"]["session_status"] | null
@@ -166,6 +177,7 @@ export type Database = {
           id?: string
           ip_address?: unknown | null
           mac_address: string
+          network_status?: string
           payment_id?: string | null
           phone_number: string
           status?: Database["public"]["Enums"]["session_status"] | null
@@ -177,12 +189,66 @@ export type Database = {
           id?: string
           ip_address?: unknown | null
           mac_address?: string
+          network_status?: string
           payment_id?: string | null
           phone_number?: string
           status?: Database["public"]["Enums"]["session_status"] | null
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "user_sessions_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vouchers: {
+        Row: {
+          code: string
+          created_at: string | null
+          id: string
+          package_id: string
+          session_id: string | null
+          status: string
+          used_at: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string | null
+          id?: string
+          package_id: string
+          session_id?: string | null
+          status?: string
+          used_at?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string | null
+          id?: string
+          package_id?: string
+          session_id?: string | null
+          status?: string
+          used_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vouchers_package_id_fkey"
+            columns: ["package_id"]
+            isOneToOne: false
+            referencedRelation: "access_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vouchers_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "user_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
@@ -193,7 +259,7 @@ export type Database = {
     }
     Enums: {
       payment_status: "pending" | "completed" | "failed" | "expired"
-      session_status: "active" | "expired" | "terminated"
+      session_status: "pending" | "active" | "expired" | "terminated"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -237,18 +303,14 @@ export type TablesInsert<
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof Database
   }
-    ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    ? keyof Database[DefaultSchemaTableNameOrOptions extends { schema: keyof Database } ? DefaultSchemaTableNameOrOptions["schema"] : never]["Tables"]
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
-  ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
-    }
+  ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends { Insert: infer I }
     ? I
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
-      }
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends { Insert: infer I }
       ? I
       : never
     : never
@@ -260,18 +322,14 @@ export type TablesUpdate<
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof Database
   }
-    ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    ? keyof Database[DefaultSchemaTableNameOrOptions extends { schema: keyof Database } ? DefaultSchemaTableNameOrOptions["schema"] : never]["Tables"]
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
-  ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
-    }
+  ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends { Update: infer U }
     ? U
     : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
-      }
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends { Update: infer U }
       ? U
       : never
     : never
@@ -310,7 +368,7 @@ export const Constants = {
   public: {
     Enums: {
       payment_status: ["pending", "completed", "failed", "expired"],
-      session_status: ["active", "expired", "terminated"],
+      session_status: ["pending", "active", "expired", "terminated"],
     },
   },
 } as const
