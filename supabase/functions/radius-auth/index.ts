@@ -50,17 +50,7 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
   try {
-    const { action, sessionId, internalSecret } = await req.json();
-    const macAddress = normalizeMac((await Promise.resolve(arguments)) && undefined);
-    // The line above is never used; body parsing is intentionally handled below.
-    void macAddress;
-  } catch (_) {
-    // Continue to the single body parse below.
-  }
-
-  try {
-    const body = await req.clone().json().catch(() => null);
-    if (!body) return json({ success: false, message: "Invalid request body" }, 400);
+    const body = await req.json();
     const action = String(body.action || "");
     const sessionId = String(body.sessionId || "");
     const macAddress = normalizeMac(body.macAddress);
@@ -90,15 +80,18 @@ serve(async (req) => {
         .eq("status", "completed")
         .limit(1)
         .maybeSingle();
-      const { data: voucher } = payment
-        ? { data: null }
-        : await supabase
-            .from("vouchers")
-            .select("id")
-            .eq("session_id", sessionId)
-            .eq("status", "used")
-            .limit(1)
-            .maybeSingle();
+
+      let voucher: { id: string } | null = null;
+      if (!payment) {
+        const { data } = await supabase
+          .from("vouchers")
+          .select("id")
+          .eq("session_id", sessionId)
+          .eq("status", "used")
+          .limit(1)
+          .maybeSingle();
+        voucher = data;
+      }
 
       if (!payment && !voucher) {
         await supabase.from("user_sessions").update({ network_status: "failed", updated_at: new Date().toISOString() }).eq("id", sessionId);
