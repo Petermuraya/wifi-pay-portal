@@ -36,11 +36,17 @@ serve(async (req) => {
     const consumerSecret = Deno.env.get("MPESA_CONSUMER_SECRET") || "";
     const businessShortCode = Deno.env.get("MPESA_BUSINESS_SHORT_CODE") || "";
     const passkey = Deno.env.get("MPESA_PASSKEY") || "";
+    const callbackSecret = Deno.env.get("MPESA_CALLBACK_SECRET") || "";
+    const transactionType = Deno.env.get("MPESA_TRANSACTION_TYPE") || "CustomerPayBillOnline";
     const mpesaBaseUrl = (Deno.env.get("MPESA_BASE_URL") || "https://sandbox.safaricom.co.ke").replace(/\/$/, "");
 
-    if (!supabaseUrl || !serviceRoleKey || !consumerKey || !consumerSecret || !businessShortCode || !passkey) {
+    if (!supabaseUrl || !serviceRoleKey || !consumerKey || !consumerSecret || !businessShortCode || !passkey || !callbackSecret) {
       console.error("Missing required M-Pesa/Supabase configuration");
       return json({ success: false, message: "Payment service is not configured" }, 503);
+    }
+
+    if (!["CustomerPayBillOnline", "CustomerBuyGoodsOnline"].includes(transactionType)) {
+      return json({ success: false, message: "M-Pesa transaction type is not configured correctly" }, 503);
     }
 
     const { packageId, phoneNumber, macAddress } = await req.json();
@@ -74,13 +80,12 @@ serve(async (req) => {
       return json({ success: false, message: "This package is not available" }, 404);
     }
 
-    const expiresAt = new Date(Date.now() + durationMinutes * 60_000).toISOString();
     const { data: session, error: sessionError } = await supabase
       .from("user_sessions")
       .insert({
         mac_address: mac,
         phone_number: phone,
-        expires_at: expiresAt,
+        expires_at: null,
         status: "pending",
         network_status: "pending",
       })
@@ -126,12 +131,12 @@ serve(async (req) => {
       BusinessShortCode: businessShortCode,
       Password: btoa(`${businessShortCode}${passkey}${timestamp}`),
       Timestamp: timestamp,
-      TransactionType: "CustomerPayBillOnline",
+      TransactionType: transactionType,
       Amount: price,
       PartyA: phone,
       PartyB: businessShortCode,
       PhoneNumber: phone,
-      CallBackURL: `${supabaseUrl}/functions/v1/mpesa-callback`,
+      CallBackURL: `${supabaseUrl}/functions/v1/mpesa-callback?token=${encodeURIComponent(callbackSecret)}`,
       AccountReference: `WIFI-${payment.id.slice(0, 8)}`,
       TransactionDesc: `${accessPackage.name} WiFi access`,
     };
@@ -155,7 +160,24 @@ serve(async (req) => {
       .single();
     if (updateError || !updatedPayment) throw updateError || new Error("Could not save M-Pesa request");
 
-    return json({ success: true, payment: updatedPayment, checkoutRequestId: stkData.CheckoutRequestID });
+    // CheckoutRequestID stays server-side. The browser only needs the payment ID and status fields.
+    return json({
+      success: true,
+      payment: {
+        id: updatedPayment.id,
+        amount: updatedPayment.amount,
+        created_at: updatedPayment.created_at,
+        mpesa_checkout_request_id: null,
+        mpesa_receipt_number: null,
+        package_id: updatedPayment.package_id,
+        phone_number: updatedPayment.phone_number,
+        reconnection_code: null,
+        reconnection_code_used: false,
+        session_id: updatedPayment.session_id,
+        status: updatedPayment.status,
+        updated_at: updatedPayment.updated_at,
+      },
+    });
   } catch (error) {
     console.error("STK push error", error);
     try {
