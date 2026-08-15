@@ -20,9 +20,9 @@ interface PaymentFormProps {
 
 const normalizeKenyanPhone = (value: string) => {
   const digits = value.replace(/\D/g, "");
-  if (/^07\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
-  if (/^7\d{8}$/.test(digits)) return `254${digits}`;
-  if (/^2547\d{8}$/.test(digits)) return digits;
+  if (/^0[17]\d{8}$/.test(digits)) return `254${digits.slice(1)}`;
+  if (/^[17]\d{8}$/.test(digits)) return `254${digits}`;
+  if (/^254[17]\d{8}$/.test(digits)) return digits;
   return "";
 };
 
@@ -39,7 +39,7 @@ export function PaymentForm({ package: pkg, macAddress, onPaymentCreated, onBack
   const paymentMutation = useMutation({
     mutationFn: async () => {
       const phone = normalizeKenyanPhone(phoneNumber);
-      if (!phone) throw new Error("Enter a valid Safaricom number, for example 0712345678.");
+      if (!phone) throw new Error("Enter a valid Kenyan M-Pesa number, for example 0712345678 or 0112345678.");
 
       const { data, error } = await supabase.functions.invoke("mpesa-stk-push", {
         body: { packageId: pkg.id, phoneNumber: phone, macAddress },
@@ -94,18 +94,18 @@ export function PaymentForm({ package: pkg, macAddress, onPaymentCreated, onBack
                 id="phone"
                 inputMode="tel"
                 autoComplete="tel"
-                placeholder="0712 345 678"
+                placeholder="0712 345 678 or 0112 345 678"
                 value={phoneNumber}
                 onChange={(event) => setPhoneNumber(event.target.value)}
                 className="h-12 rounded-xl pl-11 text-base"
               />
             </div>
-            <p className="mt-2 text-xs leading-5 text-slate-500">We will send an STK push to this Safaricom number. The package price is verified on the server.</p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">We send an STK push to this M-Pesa number. Package price and duration are verified on the server.</p>
           </div>
 
           <div className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-900">
             <div className="flex items-center gap-2 font-semibold"><Zap className="h-4 w-4" /> What happens next?</div>
-            <p className="mt-1.5 leading-5 text-emerald-800">Approve the prompt on your phone. Once Safaricom confirms payment, this device is activated automatically.</p>
+            <p className="mt-1.5 leading-5 text-emerald-800">Approve the prompt on your phone. After Safaricom confirms payment, the hotspot activates this device automatically.</p>
           </div>
 
           <Button type="submit" disabled={paymentMutation.isPending} className="h-12 w-full rounded-xl bg-[#00a651] text-base font-bold hover:bg-[#008f46]">
