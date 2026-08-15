@@ -1,130 +1,80 @@
-
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    )
+      Deno.env.get("SUPABASE_URL") || "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
+      { auth: { persistSession: false } },
+    );
 
-    const { action, sessionId, macAddress } = await req.json()
-    console.log('Session manager action:', action)
+    const { action, sessionId, macAddress } = await req.json();
 
-    if (action === 'activate') {
-      // Activate session after successful payment
+    if (action === "activate") {
+      if (!sessionId || !macAddress) return json({ success: false, message: "Missing session or device" }, 400);
+
       const { data: session, error } = await supabase
-        .from('user_sessions')
-        .update({ 
-          status: 'active',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', sessionId)
+        .from("user_sessions")
+        .update({ status: "active", updated_at: new Date().toISOString() })
+        .eq("id", sessionId)
+        .eq("mac_address", macAddress)
         .select()
-        .single()
+        .single();
+      if (error || !session) throw error || new Error("Session not found");
 
-      if (error) throw error
+      const { data: network, error: networkError } = await supabase.functions.invoke("radius-auth", {
+        body: { action: "authorize", sessionId, macAddress },
+      });
 
-      // Send authorization to RADIUS
-      const radiusAuth = await supabase.functions.invoke('radius-auth', {
-        body: { action: 'authorize', sessionId, macAddress }
-      })
-
-      console.log('Session activated:', sessionId)
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          session: session,
-          message: 'Session activated successfully' 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return json({
+        success: true,
+        session,
+        networkProvisioned: !networkError && network?.networkProvisioned === true,
+        networkMessage: networkError?.message || network?.controller?.message || null,
+      });
     }
 
-    if (action === 'deactivate') {
-      // Deactivate session
-      const { error } = await supabase
-        .from('user_sessions')
-        .update({ 
-          status: 'terminated',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', sessionId)
-
-      if (error) throw error
-
-      // Disconnect from RADIUS
-      await supabase.functions.invoke('radius-auth', {
-        body: { action: 'disconnect', sessionId, macAddress }
-      })
-
-      console.log('Session deactivated:', sessionId)
-      
-      return new Response(
-        JSON.stringify({ success: true, message: 'Session deactivated' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    if (action === "deactivate") {
+      if (!sessionId || !macAddress) return json({ success: false, message: "Missing session or device" }, 400);
+      const { data: network, error: networkError } = await supabase.functions.invoke("radius-auth", {
+        body: { action: "disconnect", sessionId, macAddress },
+      });
+      await supabase.from("user_sessions").update({ status: "terminated", updated_at: new Date().toISOString() }).eq("id", sessionId);
+      return json({ success: true, networkProvisioned: !networkError && network?.networkProvisioned === true });
     }
 
-    if (action === 'check-expired') {
-      // Check and terminate expired sessions
+    if (action === "check-expired") {
       const { data: expiredSessions, error } = await supabase
-        .from('user_sessions')
-        .select('*')
-        .eq('status', 'active')
-        .lt('expires_at', new Date().toISOString())
-
-      if (error) throw error
+        .from("user_sessions")
+        .select("*")
+        .eq("status", "active")
+        .lt("expires_at", new Date().toISOString());
+      if (error) throw error;
 
       for (const session of expiredSessions || []) {
-        // Terminate expired session
-        await supabase
-          .from('user_sessions')
-          .update({ status: 'expired' })
-          .eq('id', session.id)
-
-        // Disconnect from RADIUS
-        await supabase.functions.invoke('radius-auth', {
-          body: { 
-            action: 'disconnect', 
-            sessionId: session.id, 
-            macAddress: session.mac_address 
-          }
-        })
+        await supabase.from("user_sessions").update({ status: "expired", updated_at: new Date().toISOString() }).eq("id", session.id);
+        await supabase.functions.invoke("radius-auth", {
+          body: { action: "disconnect", sessionId: session.id, macAddress: session.mac_address },
+        });
       }
 
-      console.log('Expired sessions processed:', expiredSessions?.length || 0)
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          expiredCount: expiredSessions?.length || 0 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return json({ success: true, expiredCount: expiredSessions?.length || 0 });
     }
 
-    throw new Error('Invalid action')
-
+    return json({ success: false, message: "Invalid action" }, 400);
   } catch (error) {
-    console.error('Session manager error:', error)
-    return new Response(
-      JSON.stringify({ success: false, error: error.message }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500 
-      }
-    )
+    console.error("Session manager error", error);
+    return json({ success: false, message: error instanceof Error ? error.message : "Session manager failed" }, 500);
   }
-})
+});
