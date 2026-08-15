@@ -16,7 +16,6 @@ import type { Database } from "@/integrations/supabase/types";
 
 type AccessPackage = Database["public"]["Tables"]["access_packages"]["Row"];
 type Payment = Database["public"]["Tables"]["payments"]["Row"];
-
 type TabId = "packages" | "voucher" | "reconnect" | "session";
 
 const tabs = [
@@ -32,16 +31,25 @@ const normalizeMac = (value: string | null) => {
   return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(normalized) ? normalized : "";
 };
 
+const safeDestination = (value: string | null) => {
+  if (!value) return "";
+  try {
+    const destination = new URL(value, window.location.origin);
+    return destination.protocol === "http:" || destination.protocol === "https:" ? destination.toString() : "";
+  } catch {
+    return "";
+  }
+};
+
 export default function Portal() {
   const [selectedPackage, setSelectedPackage] = useState<AccessPackage | null>(null);
   const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
-  const [currentSession, setCurrentSession] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<TabId>("packages");
   const { toast } = useToast();
 
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const macAddress = normalizeMac(params.get("mac") || params.get("client_mac"));
-  const originalUrl = params.get("link-orig") || params.get("orig") || params.get("dst") || params.get("url") || "";
+  const originalUrl = safeDestination(params.get("link-orig") || params.get("orig") || params.get("dst") || params.get("url"));
 
   const { data: packages, isLoading, error } = useQuery({
     queryKey: ["access-packages"],
@@ -69,13 +77,19 @@ export default function Portal() {
   }, [error, toast]);
 
   const handleSessionCreated = (session: any) => {
-    setCurrentSession(session);
-    sessionStorage.setItem("captive_portal_auth", "success");
-    if (originalUrl) {
-      window.setTimeout(() => window.location.assign(originalUrl), 1400);
+    if (session?.network_status === "active") {
+      sessionStorage.setItem("captive_portal_auth", "success");
+      if (originalUrl) {
+        window.setTimeout(() => window.location.assign(originalUrl), 1200);
+        return;
+      }
     } else {
-      setActiveTab("session");
+      toast({
+        title: "Access accepted",
+        description: "Your payment or voucher is valid. The hotspot is still confirming network activation.",
+      });
     }
+    setActiveTab("session");
   };
 
   if (isLoading) {
@@ -119,8 +133,8 @@ export default function Portal() {
               <Wifi className="h-5 w-5" />
             </span>
             <span className="text-left">
-              <span className="block text-base font-bold leading-tight">SwiftSpot WiFi</span>
-              <span className="block text-xs text-slate-500">Fast. Simple. M-Pesa ready.</span>
+              <span className="block text-base font-bold leading-tight">WiFi Pay</span>
+              <span className="block text-xs text-slate-500">Fast access. Simple M-Pesa payment.</span>
             </span>
           </button>
           <Button variant="ghost" size="sm" onClick={() => toast({ title: "Need help?", description: "Use your voucher/reconnection code or contact the hotspot operator." })}>
@@ -138,7 +152,7 @@ export default function Portal() {
               </div>
               <h1 className="mt-4 max-w-xl text-3xl font-bold tracking-tight sm:text-4xl">Get online in under a minute.</h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">
-                Choose a package, pay securely with M-Pesa and your device is activated automatically.
+                Choose a package, pay with M-Pesa and this device is activated automatically after payment and router confirmation.
               </p>
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -195,7 +209,7 @@ export default function Portal() {
       </main>
 
       <footer className="mx-auto max-w-5xl px-4 pb-8 text-center text-xs text-slate-500 sm:px-6">
-        Secure M-Pesa payments • Access is tied to this device • © {new Date().getFullYear()} SwiftSpot WiFi
+        Secure M-Pesa payments • Access is tied to this device • © {new Date().getFullYear()} WiFi Pay
       </footer>
     </div>
   );
